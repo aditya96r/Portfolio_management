@@ -51,11 +51,12 @@ if Downturn and Goal and Experience:
         for asset, percent in allocation.items():
             st.write(f"- {asset}: **{percent}%**")
 
-        # Generate Pie Chart
-        fig, ax = plt.subplots(figsize=(6,6))  # Fix potential issue
-        ax.pie(allocation.values(), labels=allocation.keys(), autopct='%1.1f%%', startangle=90)
-        ax.axis('equal')  # Ensures pie chart is circular
-        st.pyplot(fig)
+        # Ensure allocation is defined before generating pie chart
+        if allocation:
+            fig, ax = plt.subplots(figsize=(6,6))  
+            ax.pie(allocation.values(), labels=allocation.keys(), autopct='%1.1f%%', startangle=90)
+            ax.axis('equal')  # Ensures pie chart is circular
+            st.pyplot(fig)
                                    
   
   
