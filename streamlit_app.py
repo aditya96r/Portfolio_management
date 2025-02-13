@@ -8,7 +8,7 @@ with st.sidebar:
   st.header('Investment Risk Tolerance Assessment')
   Downturn = st. selectbox('Downturn',('','Sell immediately','Hold and wait',' Buy more because prices are cheaper'))
   Goal = st. selectbox('Goal',('','Saftey','Growth','High Returns'))
-  Experience = st. selectbox ('','Experience', ('Beginner','Intermediate','Expert'))
+  Experience = st. selectbox ('Experience', ('','Beginner','Intermediate','Expert'))
   
 def calculate_risk_score(Downturn, Goal, Experience):
     score = 0
