@@ -51,12 +51,12 @@ if Downturn and Goal and Experience:
         for asset, percent in allocation.items():
             st.write(f"- {asset}: **{percent}%**")
 
-        # Ensure allocation is defined before generating pie chart
-        if allocation:
-            fig, ax = plt.subplots(figsize=(6,6))  
-            ax.pie(allocation.values(), labels=allocation.keys(), autopct='%1.1f%%', startangle=90)
-            ax.axis('equal')  # Ensures pie chart is circular
-            st.pyplot(fig)
+        # Create a Seaborn Bar Chart Instead of Pie Chart
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.barplot(x=list(allocation.keys()), y=list(allocation.values()), palette="viridis", ax=ax)
+        ax.set_ylabel("Allocation (%)")
+        ax.set_title("Portfolio Allocation")
+        st.pyplot(fig)
                                    
   
   
