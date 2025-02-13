@@ -39,25 +39,36 @@ if Downturn and Goal and Experience:
     # Display result
     st.write(f"### Your Risk Profile: **{risk_category}**")
   # Define Asset Allocation Based on Risk Profile
-    if risk_category == "Conservative":
+    if Downturn and Goal and Experience:
+    risk_score = calculate_risk_score(Downturn, Goal, Experience)
+
+    # Assign Risk Category
+    if risk_score <= 2:
+        risk_category = "Conservative"
         allocation = {"Stocks": 20, "Bonds": 50, "Gold": 20, "Cash": 10}
-    elif risk_category == "Moderate":
+    elif risk_score <= 6:
+        risk_category = "Moderate"
         allocation = {"Stocks": 50, "Bonds": 30, "Gold": 15, "Cash": 5}
-    else:  # Aggressive
+    else:
+        risk_category = "Aggressive"
         allocation = {"Stocks": 80, "Bonds": 10, "Gold": 5, "Cash": 5}
 
-    # Display Portfolio Allocation in an Expander
-    with st.expander("View Portfolio Allocation"):
-        st.write(f"**{risk_category} Portfolio Allocation:**")
-        for asset, percent in allocation.items():
-            st.write(f"- {asset}: **{percent}%**")
+    st.write(f"### Your Risk Profile: **{risk_category}**")
 
-        # Ensure allocation is defined before generating pie chart
-        if allocation:
-            fig, ax = plt.subplots(figsize=(6,6))  
-            ax.pie(allocation.values(), labels=allocation.keys(), autopct='%1.1f%%', startangle=90)
-            ax.axis('equal')  # Ensures pie chart is circular
-            st.pyplot(fig)
-                                   
-  
-  
+    # Convert allocation to DataFrame for Plotly
+    df_allocation = pd.DataFrame({
+        "Asset Class": allocation.keys(),
+        "Percentage": allocation.values()
+    })
+
+    # Split layout into two columns
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("### Portfolio Allocation Table:")
+        st.write(df_allocation)
+
+    with col2:
+        st.write("### Portfolio Allocation Pie Chart:")
+        fig = px.pie(df_allocation, values="Percentage", names="Asset Class", title="Portfolio Breakdown")
+        st.plotly_chart(fig, use_container_width=True)
