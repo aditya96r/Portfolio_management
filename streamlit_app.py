@@ -1,5 +1,5 @@
 import streamlit as st
 
-st.title('🎈 App Name')
+st.title('🎈 Portfolio Mangement App')
 
-st.write('Hello world!')
+st.info('This app shows your portfolio!')
