@@ -38,23 +38,7 @@ if Downturn and Goal and Experience:
 
     # Display result
     st.write(f"### Your Risk Profile: **{risk_category}**")
-  # Define Asset Allocation Based on Risk Profile
-    if Downturn and Goal and Experience:
-    risk_score = calculate_risk_score(Downturn, Goal, Experience)
-
-    # Assign Risk Category
-    if risk_score <= 2:
-        risk_category = "Conservative"
-        allocation = {"Stocks": 20, "Bonds": 50, "Gold": 20, "Cash": 10}
-    elif risk_score <= 6:
-        risk_category = "Moderate"
-        allocation = {"Stocks": 50, "Bonds": 30, "Gold": 15, "Cash": 5}
-    else:
-        risk_category = "Aggressive"
-        allocation = {"Stocks": 80, "Bonds": 10, "Gold": 5, "Cash": 5}
-
-    st.write(f"### Your Risk Profile: **{risk_category}**")
-
+  
     # Convert allocation to DataFrame for Plotly
     df_allocation = pd.DataFrame({
         "Asset Class": allocation.keys(),
