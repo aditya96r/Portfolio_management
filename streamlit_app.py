@@ -13,32 +13,16 @@ with st.sidebar:
 def calculate_risk_score(Downturn, Goal, Experience):
     score = 0
 
-    # Downturn Reaction
-    downturn_scores = {
-        'Sell immediately': 0,
-        'Hold and wait': 2,
-        'Buy more because prices are cheaper': 4
-    }
+    downturn_scores = {'Sell immediately': 0, 'Hold and wait': 2, 'Buy more because prices are cheaper': 4}
+    goal_scores = {'Safety': 0, 'Growth': 2, 'High Returns': 4}
+    experience_scores = {'Beginner': 0, 'Intermediate': 2, 'Expert': 4}
+
     score += downturn_scores.get(Downturn, 0)
-
-    # Investment Goal
-    goal_scores = {
-        'Safety': 0,
-        'Growth': 2,
-        'High Returns': 4
-    }
     score += goal_scores.get(Goal, 0)
-
-    # Investment Experience
-    experience_scores = {
-        'Beginner': 0,
-        'Intermediate': 2,
-        'Expert': 4
-    }
     score += experience_scores.get(Experience, 0)
 
     return score
-
+  
 # Calculate Risk Score
 if Downturn and Goal and Experience:
     risk_score = calculate_risk_score(Downturn, Goal, Experience)
@@ -67,11 +51,11 @@ if Downturn and Goal and Experience:
         for asset, percent in allocation.items():
             st.write(f"- {asset}: **{percent}%**")
 
-        # Plot Pie Chart
-        fig, ax = plt.subplots()
+        # Generate Pie Chart
+        fig, ax = plt.subplots(figsize=(6,6))  # Fix potential issue
         ax.pie(allocation.values(), labels=allocation.keys(), autopct='%1.1f%%', startangle=90)
-        ax.axis('equal')  # Equal aspect ratio ensures pie is drawn as a circle
-        st.pyplot(fig)  
+        ax.axis('equal')  # Ensures pie chart is circular
+        st.pyplot(fig)
                                    
   
   
