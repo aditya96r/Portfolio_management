@@ -13,73 +13,98 @@ st.write("""
 ### Dynamic Portfolio Optimization using Modern Finance Theory
 """)
 
-# List of 20 stocks across different industries with validation
+# Updated stock universe with verified tickers
 STOCK_UNIVERSE = [
-    'AAPL', 'MSFT', 'GOOG', 'AMZN', 'TSLA',    # Tech
-    'JNJ', 'PFE', 'MRK',                       # Healthcare
-    'JPM', 'BAC', 'GS',                        # Financials
-    'WMT', 'TGT', 'COST',                      # Retail
-    'XOM', 'CVX',                              # Energy
-    'UNH', 'PG', 'DIS', 'NKE'                  # Diverse sectors
+    'AAPL', 'MSFT', 'GOOG', 'AMZN', 'TSLA',
+    'JNJ', 'PFE', 'MRK', 'JPM', 'BAC',
+    'GS', 'WMT', 'TGT', 'COST', 'XOM',
+    'CVX', 'UNH', 'PG', 'DIS', 'NKE'
 ]
 
 def get_valid_tickers(tickers):
-    """Filter out invalid/unavailable tickers"""
+    """Robust validation of tickers using multiple checks"""
     valid = []
     for t in tickers:
         try:
-            if yf.Ticker(t).info['regularMarketPrice']:
-                valid.append(t)
-        except:
+            # Check basic info
+            info = yf.Ticker(t).info
+            if not info.get('regularMarketPrice'):
+                continue
+                
+            # Check historical data
+            hist = yf.Ticker(t).history(period="7d")
+            if hist.empty or 'Close' not in hist.columns:
+                continue
+                
+            valid.append(t)
+        except Exception as e:
             continue
     return valid
 
 def fetch_data():
-    """Fetch historical stock data with error handling"""
+    """Fetch and validate stock data with robust error handling"""
     valid_tickers = get_valid_tickers(STOCK_UNIVERSE)
     if not valid_tickers:
+        st.error("🚨 No valid tickers found! Check your stock symbols.")
         return pd.DataFrame()
     
     try:
         data = yf.download(
             tickers=valid_tickers,
-            period="1y",
+            period="2y",
             interval="1d",
             group_by='ticker',
-            progress=False
+            progress=False,
+            auto_adjust=True
         )
-        # Safely access Adjusted Close prices
-        adj_close = data.xs('Adj Close', level=1, axis=1)
-        return adj_close.dropna(axis=1)
+        
+        # Handle different data structures
+        if len(valid_tickers) == 1:
+            adj_close = data[['Close']].rename(columns={'Close': valid_tickers[0]})
+        else:
+            adj_close = data.xs('Close', level=1, axis=1, drop_level=False)
+            
+        # Clean and validate data
+        adj_close = adj_close.ffill().dropna(axis=1)
+        if adj_close.empty:
+            st.warning("⚠️ Data available but contains missing values")
+            return pd.DataFrame()
+            
+        return adj_close
+    
     except Exception as e:
-        st.error(f"Data retrieval error: {str(e)}")
+        st.error(f"🔴 Data retrieval failed: {str(e)}")
         return pd.DataFrame()
 
 def calculate_momentum(data):
-    """Calculate momentum factor (3-month returns)"""
+    """Calculate momentum factor with validation"""
+    if data.empty:
+        return pd.Series()
     returns = data.pct_change().dropna()
     return returns.last('3M').mean()
 
 def calculate_value(data):
-    """Calculate value factor (P/E ratio) with error handling"""
+    """Calculate value factor with enhanced error handling"""
     pe_ratios = {}
     for ticker in data.columns:
         try:
-            pe = yf.Ticker(ticker).info.get('trailingPE', np.nan)
-            pe_ratios[ticker] = pe if not None else np.nan
+            info = yf.Ticker(ticker).info
+            pe = info.get('trailingPE', info.get('forwardPE', np.nan))
+            pe_ratios[ticker] = pe if pd.notnull(pe) else np.nan
         except:
             pe_ratios[ticker] = np.nan
-    return pd.Series(pe_ratios).replace(np.inf, np.nan).dropna()
+    return pd.Series(pe_ratios).replace([np.inf, -np.inf], np.nan).dropna()
 
 def optimize_portfolio(risk_category, data):
-    """Optimize portfolio based on risk category"""
-    if data.empty:
+    """Robust portfolio optimization with fallbacks"""
+    if data.empty or len(data.columns) < 2:
+        st.error("❌ Insufficient data for optimization")
         return {}
-        
-    returns = expected_returns.mean_historical_return(data)
-    cov_matrix = risk_models.sample_cov(data)
     
     try:
+        returns = expected_returns.mean_historical_return(data)
+        cov_matrix = risk_models.sample_cov(data)
+        
         if risk_category == "Aggressive":
             ef = EfficientFrontier(returns, cov_matrix)
             ef.add_objective(objective_functions.L2_reg)
@@ -87,18 +112,21 @@ def optimize_portfolio(risk_category, data):
             weights = ef.clean_weights()
             
         elif risk_category == "Moderate":
-            # Factor investing: 50% momentum, 50% value
             momentum = calculate_momentum(data)
             value = calculate_value(data)
             
-            # Normalize and combine scores
+            if momentum.empty or value.empty:
+                st.warning("⚠️ Factor data incomplete, using equal weighting")
+                return {t: 1/len(data.columns) for t in data.columns}
+                
             momentum_norm = momentum.rank(pct=True)
-            value_norm = (1/value.rank(pct=True))  # Lower P/E is better
-            
+            value_norm = (1/value.rank(pct=True)).fillna(0)
             combined_score = 0.5*momentum_norm + 0.5*value_norm
-            selected = combined_score.nlargest(10).index.tolist()
             
-            # Optimize on selected stocks
+            selected = combined_score.nlargest(10).index.tolist()
+            if len(selected) < 2:
+                selected = data.columns.tolist()[:2]
+                
             ef = EfficientFrontier(returns[selected], cov_matrix.loc[selected, selected])
             ef.max_sharpe()
             weights = ef.clean_weights()
@@ -110,24 +138,25 @@ def optimize_portfolio(risk_category, data):
         return {k: v for k, v in weights.items() if v > 0.01}
         
     except Exception as e:
-        st.error(f"Optimization error: {str(e)}")
+        st.error(f"🔴 Optimization failed: {str(e)}")
         return {}
 
 # Risk Assessment Sidebar
 with st.sidebar:
     st.header("Investor Profile")
+    risk_tolerance = st.slider("Risk Tolerance (1-10)", 1, 10, 5,
+                              help="1 = Very Conservative, 10 = Very Aggressive")
     investment_horizon = st.selectbox("Investment Horizon", 
-        ["Short-term (1-3 years)", "Medium-term (3-5 years)", "Long-term (5+ years)"])
-    risk_tolerance = st.slider("Risk Tolerance (1-10)", 1, 10, 5)
-    experience = st.selectbox("Experience Level", ["Beginner", "Intermediate", "Advanced"])
+        ["1-3 years", "3-5 years", "5+ years"])
+    experience = st.selectbox("Experience Level", 
+        ["Beginner", "Intermediate", "Advanced"])
 
 # Main application logic
-if st.button("Build Optimal Portfolio"):
-    with st.spinner("Crunching numbers using Modern Portfolio Theory..."):
+if st.button("Build Optimal Portfolio 🔄"):
+    with st.spinner("Analyzing market data..."):
         data = fetch_data()
         
         if data.empty:
-            st.error("No valid financial data could be retrieved. Please try different assets.")
             st.stop()
             
         # Determine risk category
@@ -144,58 +173,51 @@ if st.button("Build Optimal Portfolio"):
         # Optimize stock portfolio
         stock_weights = optimize_portfolio(risk_category, data)
         if not stock_weights:
-            st.error("Failed to optimize portfolio. Please adjust your parameters.")
+            st.error("❌ Failed to optimize portfolio")
             st.stop()
             
-        stock_percentage = allocation["Stocks"]
-        
         # Create full allocation
         full_allocation = {}
+        stock_percentage = allocation["Stocks"] / sum(stock_weights.values())
         for stock, weight in stock_weights.items():
             full_allocation[stock] = weight * stock_percentage
+            
         for asset, weight in allocation.items():
             if asset != "Stocks":
                 full_allocation[asset] = weight
 
-        # Create pie chart
-        fig, ax = plt.subplots(figsize=(10, 8))
+        # Visualization
+        fig, ax = plt.subplots(figsize=(10, 6))
         ax.pie(full_allocation.values(), labels=full_allocation.keys(),
                autopct='%1.1f%%', startangle=90,
-               colors=plt.cm.Paired.colors,
+               colors=plt.cm.tab20.colors,
                wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
-        ax.set_title(f"{risk_category} Portfolio Allocation", fontsize=16)
+        ax.set_title(f"{risk_category} Portfolio Allocation", pad=20, fontsize=16)
         
         # Display results
-        col1, col2 = st.columns([3, 2])
+        col1, col2 = st.columns([2, 1])
         with col1:
             st.pyplot(fig)
         with col2:
-            st.subheader("Portfolio Construction Strategy")
-            st.write(f"""
-            **Risk Category:** {risk_category}
-            - **Optimization Method:** {'Factor Investing' if risk_category == 'Moderate' else 'Markowitz Optimization'}
-            - **Stock Selection:** {len(stock_weights)} companies across {len(set([s.split()[0] for s in stock_weights]))} sectors
-            - **Rebalancing Frequency:** {'Quarterly' if risk_category == 'Conservative' else 'Monthly'}
+            st.subheader("Portfolio Strategy")
+            st.markdown(f"""
+            - **Risk Profile:** {risk_category}
+            - **Optimization Method:** {'Factor Investing' if risk_category == 'Moderate' else 'Markowitz'}
+            - **Asset Classes:** {len(full_allocation)} holdings
+            - **Rebalancing:** {'Quarterly' if risk_category == 'Conservative' else 'Monthly'}
             """)
             
-            st.subheader("Key Statistics")
-            returns = data[list(stock_weights.keys())].pct_change().mean().dot(list(stock_weights.values()))
+            returns = data.pct_change().mean().dot(list(stock_weights.values()))
             volatility = np.sqrt(np.dot(list(stock_weights.values()), 
-                                     np.dot(data[list(stock_weights.keys())].pct_change().cov(), 
+                                     np.dot(data.pct_change().cov(), 
                                             list(stock_weights.values()))))
-            st.write(f"""
-            - **Expected Annual Return:** {returns*252:.1%}
-            - **Expected Volatility:** {volatility*np.sqrt(252):.1%}
-            - **Sharpe Ratio:** {returns/volatility:.2f}
-            """)
-            
-        st.subheader("Portfolio Composition Details")
-        st.dataframe(pd.DataFrame.from_dict(full_allocation, orient='index', 
-                      columns=['Allocation (%)']).sort_values(by='Allocation (%)', ascending=False))
-        
-        st.markdown("""
-        **Investment Strategy Details:**
-        - **Factor Investing (Moderate):** Combines value (P/E ratios) and momentum (3-month returns) factors
-        - **Markowitz Optimization (Aggressive):** Maximizes Sharpe ratio using Modern Portfolio Theory
-        - **Conservative Portfolio:** Focuses on low-volatility blue-chip stocks
-        """)
+            st.metric("Expected Annual Return", f"{returns*252:.1%}")
+            st.metric("Expected Volatility", f"{volatility*np.sqrt(252):.1%}")
+            st.metric("Sharpe Ratio", f"{returns/volatility:.2f}")
+
+        st.subheader("Detailed Allocation")
+        allocation_df = pd.DataFrame.from_dict(full_allocation, 
+                                              orient='index',
+                                              columns=['Allocation (%)'])
+        st.dataframe(allocation_df.sort_values(by='Allocation (%)', ascending=False),
+                    height=300)
