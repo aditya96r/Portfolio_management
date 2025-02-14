@@ -10,270 +10,156 @@ from pypfopt import risk_models, expected_returns
 st.set_page_config(page_title="Smart Portfolio Manager", layout="wide")
 st.title('AI-Driven Portfolio Management')
 st.write("""
-### Dynamic Portfolio Optimization using Modern Finance Theory
+### Dynamic Portfolio Optimization using Modern Portfolio Theory
 """)
 
-# Enhanced stock universe with reliable tickers
-STOCK_UNIVERSE = [
-    # US Large Caps
-    'AAPL', 'MSFT', 'GOOG', 'AMZN', 'TSLA', 'NVDA', 'META', 'BRK-B',
-    # Global Blue Chips
-    'NSRGY', 'TM', 'UL', 'SNY', 'AZN',
-    # ETFs
-    'SPY', 'IVV', 'VTI', 'VOO', 'QQQ', 'TLT', 'IEF',
-    # Commodities
-    'GC=F', 'SI=F', 'CL=F',
-    # Bonds
-    'BND', 'AGG'
-]
+# Enhanced stock universe with sector information
+STOCK_UNIVERSE = {
+    'AAPL': 'Technology', 'MSFT': 'Technology', 'GOOG': 'Communication',
+    'AMZN': 'Consumer Discretionary', 'TSLA': 'Consumer Discretionary',
+    'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'MRK': 'Healthcare',
+    'JPM': 'Financial', 'BAC': 'Financial', 'GS': 'Financial',
+    'WMT': 'Consumer Staples', 'TGT': 'Consumer Staples', 'COST': 'Consumer Staples',
+    'XOM': 'Energy', 'CVX': 'Energy', 'UNH': 'Healthcare',
+    'PG': 'Consumer Staples', 'DIS': 'Communication', 'NKE': 'Consumer Discretionary'
+}
 
-def get_valid_tickers(tickers):
-    """Advanced ticker validation with multiple checks"""
-    valid = []
-    invalid = []
-    
-    for t in tickers:
-        try:
-            ticker = yf.Ticker(t)
-            info = ticker.info
-            
-            # Check multiple price indicators
-            price_fields = ['regularMarketPrice', 'currentPrice', 
-                           'previousClose', 'ask', 'bid']
-            price = next(
-                (info[field] for field in price_fields 
-                if field in info and info[field] is not None),
-                None
-            )
-            
-            # Check historical data availability
-            hist = ticker.history(period="7d", interval="1d")
-            
-            if price and not hist.empty and 'Close' in hist.columns:
-                valid.append(t)
-            else:
-                invalid.append(t)
-                
-        except Exception as e:
-            invalid.append(t)
-    
-    # Display validation results
-    with st.expander("Ticker Validation Report"):
-        if invalid:
-            st.warning(f"⚠️ Unavailable tickers: {', '.join(invalid[:5])}{'...' if len(invalid)>5 else ''}")
-        if valid:
-            st.success(f"✅ Valid tickers: {', '.join(valid[:5])}{'...' if len(valid)>5 else ''}")
-    
-    return valid
+def get_sector(ticker):
+    """Get sector information with fallback"""
+    return STOCK_UNIVERSE.get(ticker, 'Other')
 
 def fetch_data():
-    """Robust data fetching with multiple fallback strategies"""
-    valid_tickers = get_valid_tickers(STOCK_UNIVERSE)
+    """Fetch historical data with error handling"""
+    valid_tickers = [t for t in STOCK_UNIVERSE.keys() if yf.Ticker(t).history(period='1mo').shape[0] > 0]
+    
     if not valid_tickers:
-        st.error("""
-        🚨 Critical Data Issue!
-        Possible solutions:
-        1. Check internet connection
-        2. Try different assets
-        3. Retry during market hours (9:30 AM - 4 PM EST)
-        """)
+        st.error("No valid tickers available")
         return pd.DataFrame()
     
-    # Try different time periods
-    for period in ["2y", "1y", "6mo"]:
-        try:
-            data = yf.download(
-                tickers=valid_tickers,
-                period=period,
-                interval="1d",
-                group_by='ticker',
-                progress=False,
-                auto_adjust=True,
-                threads=True
-            )
-            
-            # Handle data structure variations
-            if len(valid_tickers) == 1:
-                adj_close = data[['Close']].rename(columns={'Close': valid_tickers[0]})
-            else:
-                adj_close = data.xs('Close', level=1, axis=1, drop_level=False)
-            
-            cleaned_data = adj_close.ffill().dropna(axis=1)
-            if not cleaned_data.empty:
-                return cleaned_data
-            
-        except Exception as e:
-            continue
-    
-    st.error("🔴 Data retrieval failed across all attempts")
-    return pd.DataFrame()
+    try:
+        data = yf.download(list(STOCK_UNIVERSE.keys()), period="1y", interval="1d")['Adj Close']
+        return data.dropna(axis=1)
+    except Exception as e:
+        st.error(f"Data error: {str(e)}")
+        return pd.DataFrame()
 
-def calculate_momentum(data):
-    """Momentum calculation with validation"""
-    if data.empty or len(data) < 20:
-        return pd.Series(dtype=float)
-    return data.pct_change().dropna().last('3M').mean()
-
-def calculate_value(data):
-    """Value factor calculation with multiple PE sources"""
-    pe_ratios = {}
-    for ticker in data.columns:
-        try:
-            info = yf.Ticker(ticker).info
-            pe = info.get('trailingPE') or info.get('forwardPE') or np.nan
-            pe_ratios[ticker] = pe if pd.notnull(pe) else np.nan
-        except:
-            pe_ratios[ticker] = np.nan
-    return pd.Series(pe_ratios).replace([np.inf, -np.inf], np.nan).dropna()
-
-def optimize_portfolio(risk_category, data):
-    """Portfolio optimization with multiple fallbacks"""
-    if data.empty:
+def optimize_portfolio(risk_profile, data):
+    """Portfolio optimization using different theories"""
+    if data.empty or len(data.columns) < 2:
         return {}
     
-    # Minimum asset check
-    if len(data.columns) < 2:
-        st.warning("⚠️ Minimum 2 assets required for optimization")
-        return {data.columns[0]: 1.0} if len(data.columns) == 1 else {}
-
+    # Calculate expected returns and covariance matrix
+    mu = expected_returns.mean_historical_return(data)
+    S = risk_models.sample_cov(data)
+    
     try:
-        returns = expected_returns.mean_historical_return(data)
-        cov_matrix = risk_models.sample_cov(data)
-        
-        if risk_category == "Aggressive":
-            ef = EfficientFrontier(returns, cov_matrix)
+        if risk_profile == "Conservative":
+            # Minimum Variance Portfolio (Markowitz)
+            ef = EfficientFrontier(mu, S)
+            ef.min_volatility()
+            
+        elif risk_profile == "Moderate":
+            # Factor-based optimization
+            momentum = data.pct_change().mean()
+            value = data.iloc[-1] / data.iloc[-252]  # 1-year price ratio
+            
+            # Combine factors
+            combined = 0.5*momentum.rank() + 0.5*value.rank()
+            selected = combined.nlargest(10).index
+            
+            # Optimize on selected stocks
+            ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
+            ef.max_sharpe()
+            
+        else:  # Aggressive
+            # Classic Markowitz optimization
+            ef = EfficientFrontier(mu, S)
             ef.add_objective(objective_functions.L2_reg)
             ef.max_sharpe()
-            weights = ef.clean_weights()
             
-        elif risk_category == "Moderate":
-            momentum = calculate_momentum(data)
-            value = calculate_value(data)
-            
-            # Fallback to equal weight if factors missing
-            if momentum.empty or value.empty:
-                return {t: 1/len(data.columns) for t in data.columns}
-                
-            momentum_norm = momentum.rank(pct=True)
-            value_norm = (1/value.rank(pct=True)).fillna(0)
-            combined_score = 0.5*momentum_norm + 0.5*value_norm
-            
-            selected = combined_score.nlargest(10).index.tolist()
-            selected = selected if len(selected) >=2 else data.columns.tolist()[:2]
-                
-            ef = EfficientFrontier(returns[selected], cov_matrix.loc[selected, selected])
-            ef.max_sharpe()
-            weights = ef.clean_weights()
-            
-        else:  # Conservative
-            volatility = data.pct_change().std().nsmallest(5)
-            weights = {t: 1/len(volatility) for t in volatility.index}
-            
+        weights = ef.clean_weights()
         return {k: v for k, v in weights.items() if v > 0.01}
-        
+    
     except Exception as e:
-        st.error(f"Optimization Error: {str(e)}")
+        st.error(f"Optimization failed: {str(e)}")
         return {}
 
-# Risk Profile Sidebar
-with st.sidebar:
-    st.header("Investor Profile")
-    risk_tolerance = st.select_slider(
-        "Risk Tolerance",
-        options=range(1, 11),
-        value=5,
-        help="1 = Capital Preservation, 10 = Maximum Growth"
-    )
-    investment_horizon = st.radio(
-        "Investment Horizon",
-        ["Short-term (<3 years)", "Medium-term (3-5 years)", "Long-term (>5 years)"]
-    )
-    st.markdown("---")
-    st.write("💡 Tip: Higher risk tolerance requires longer time horizons")
+def create_industry_chart(weights):
+    """Create pie chart by industry sectors"""
+    sector_allocation = {}
+    for ticker, weight in weights.items():
+        sector = get_sector(ticker)
+        sector_allocation[sector] = sector_allocation.get(sector, 0) + weight
+    
+    sectors = list(sector_allocation.keys())
+    allocations = list(sector_allocation.values())
+    
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.pie(allocations, labels=sectors, autopct='%1.1f%%',
+           colors=plt.cm.tab20.colors,
+           wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
+    ax.set_title("Industry Allocation")
+    return fig
 
-# Main Application
-if st.button("Generate Optimal Portfolio 🚀"):
-    with st.spinner("Analyzing global markets..."):
+# Risk Profile Selection
+risk_profile = st.sidebar.selectbox(
+    "Select Risk Profile",
+    ["Conservative", "Moderate", "Aggressive"],
+    index=1
+)
+
+if st.button("Generate Portfolio"):
+    with st.spinner("Optimizing portfolio..."):
         data = fetch_data()
-        
         if data.empty:
             st.stop()
         
-        # Determine risk profile
-        if risk_tolerance <= 3:
-            risk_category = "Conservative"
-            allocation = {"Stocks": 30, "Bonds": 50, "Commodities": 15, "Cash": 5}
-        elif risk_tolerance <= 7:
-            risk_category = "Moderate"
-            allocation = {"Stocks": 60, "Bonds": 25, "Commodities": 10, "Cash": 5}
-        else:
-            risk_category = "Aggressive"
-            allocation = {"Stocks": 90, "Bonds": 5, "Commodities": 0, "Cash": 5}
-
-        # Portfolio Optimization
-        stock_weights = optimize_portfolio(risk_category, data)
-        if not stock_weights:
-            st.error("Portfolio Optimization Failed")
+        weights = optimize_portfolio(risk_profile, data)
+        if not weights:
+            st.error("Optimization failed")
             st.stop()
         
-        # Create Allocation
-        total_stock_weight = sum(stock_weights.values())
-        full_allocation = {}
+        # Calculate statistics using proper alignment
+        returns = data[list(weights.keys())].pct_change().mean()
+        portfolio_return = np.dot(list(weights.values()), returns)
         
-        # Stock Allocation
-        for stock, weight in stock_weights.items():
-            full_allocation[stock] = (weight / total_stock_weight) * allocation["Stocks"]
+        # Display results
+        col1, col2 = st.columns(2)
         
-        # Other Assets
-        for asset, weight in allocation.items():
-            if asset != "Stocks":
-                full_allocation[asset] = weight
-
-        # Visualization
-        fig, ax = plt.subplots(figsize=(10, 6))
-        colors = plt.cm.tab20(np.linspace(0, 1, len(full_allocation)))
-        
-        wedges, texts, autotexts = ax.pie(
-            full_allocation.values(),
-            labels=full_allocation.keys(),
-            autopct='%1.1f%%',
-            startangle=140,
-            colors=colors,
-            wedgeprops={'linewidth': 1, 'edgecolor': 'white'},
-            textprops={'fontsize': 8}
-        )
-        
-        plt.setp(autotexts, size=8, weight="bold")
-        ax.set_title(f"{risk_category} Portfolio Allocation", fontsize=16, pad=20)
-        
-        # Display
-        col1, col2 = st.columns([2, 1])
         with col1:
+            st.subheader("Portfolio Composition")
+            fig = create_industry_chart(weights)
             st.pyplot(fig)
-        with col2:
-            st.subheader("Portfolio Summary")
-            st.metric("Risk Category", risk_category)
-            st.metric("Total Assets", f"{len(full_allocation)} holdings")
-            
-            # Performance Metrics
-            returns = data.pct_change().mean().dot(list(stock_weights.values()))
-            volatility = np.sqrt(
-                np.dot(list(stock_weights.values()), 
-                      np.dot(data.pct_change().cov(), 
-                            list(stock_weights.values())))
-            )
-            st.metric("Expected Annual Return", f"{returns*252:.1%}")
-            st.metric("Expected Volatility", f"{volatility*np.sqrt(252):.1%}")
-            st.metric("Risk-Adjusted Return", f"{returns/volatility:.2f}")
         
-        # Detailed Breakdown
-        st.subheader("Detailed Allocation")
-        alloc_df = pd.DataFrame.from_dict(full_allocation, 
-                                        orient='index',
-                                        columns=['Allocation (%)'])
-        st.dataframe(
-            alloc_df.sort_values(by='Allocation (%)', ascending=False),
-            height=400,
-            use_container_width=True
-        )
+        with col2:
+            st.subheader("Portfolio Details")
+            st.write(f"**Risk Profile:** {risk_profile}")
+            st.write(f"**Number of Assets:** {len(weights)}")
+            st.write(f"**Expected Annual Return:** {portfolio_return*252:.1%}")
+            
+            st.subheader("Top Holdings")
+            for ticker, weight in sorted(weights.items(), key=lambda x: x[1], reverse=True)[:5]:
+                st.write(f"{ticker} ({get_sector(ticker)}): {weight:.1%}")
 
+        st.subheader("Portfolio Theory Used")
+        if risk_profile == "Conservative":
+            st.markdown("""
+            **Minimum Variance Portfolio (Markowitz)**
+            - Minimizes portfolio volatility
+            - Suitable for risk-averse investors
+            - Focuses on low-volatility assets
+            """)
+        elif risk_profile == "Moderate":
+            st.markdown("""
+            **Factor-Based Optimization**
+            - Combines momentum and value factors
+            - Balances growth and stability
+            - Targets risk-adjusted returns
+            """)
+        else:
+            st.markdown("""
+            **Maximum Sharpe Ratio (Markowitz)**
+            - Maximizes return per unit of risk
+            - Uses L2 regularization for stability
+            - Aggressive growth orientation
+            """)
