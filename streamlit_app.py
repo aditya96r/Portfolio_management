@@ -263,30 +263,27 @@ if st.button("Generate Portfolio"):
                 # Simulation details annotation (FIXED HERE)
                 sim_text = (
                     f"Monte Carlo Parameters:\n"
-                    f"- 500 simulations per projection\n"
-                    f"- GBM model with μ={metrics['annual_return']:.1%}\n"
-                    f"- Annual volatility σ={metrics['annual_volatility']:.1%}"
+                    f"• 500 simulations/projection\n"
+                    f"• GBM model (μ={metrics['annual_return']:.1%})\n"
+                    f"• Annual volatility (σ={metrics['annual_volatility']:.1%})"
                 )
                 ax.text(
-                    0.02, 0.02,
+                    0.5, 0.98,  # X=50%, Y=98% of axis area
                     sim_text,
                     transform=ax.transAxes,
-                    ha='left',
-                    va='center',
+                    ha='center',
+                    va='top',
                     fontsize=9,
-                    bbox=dict(facecolor='white', alpha=0.8)
-                )  # Proper closing parenthesis added
+                    bbox=dict(
+                        facecolor='white', 
+                        alpha=0.8,
+                        boxstyle='round,pad=0.3'
+                    )
+                )
 
                 # Chart formatting
-                ax.set_ylim(0, investment * 10)
+                ax.set_ylim(bottom=0, top=investment*10)  # Ensure bottom alignment
                 ax.set_xlim(0, 252*10 + 100)
                 ax.set_title("Monte Carlo Projections with Confidence Bounds", 
-                            fontsize=14, pad=15)
-                ax.set_xlabel("Trading Days", fontsize=12)
-                ax.set_ylabel("Portfolio Value (€)", fontsize=12)
-                ax.grid(True, linestyle='--', alpha=0.2)
-                ax.legend(loc='upper left', frameon=True, facecolor='white')
-                ax.yaxis.set_major_formatter(
-                    plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
+                            fontsize=14, pad=25)  # Increased title padding
                 
-                st.pyplot(fig)
