@@ -260,7 +260,7 @@ if st.button("Generate Portfolio"):
                         )
                     )
 
-                # Simulation details annotation (FIXED HERE)
+                # Simulation parameters at top-center
                 sim_text = (
                     f"Monte Carlo Parameters:\n"
                     f"• 500 simulations/projection\n"
@@ -268,7 +268,7 @@ if st.button("Generate Portfolio"):
                     f"• Annual volatility (σ={metrics['annual_volatility']:.1%})"
                 )
                 ax.text(
-                    0.5, 0.98,  # X=50%, Y=98% of axis area
+                    0.5, 0.98,
                     sim_text,
                     transform=ax.transAxes,
                     ha='center',
@@ -282,8 +282,15 @@ if st.button("Generate Portfolio"):
                 )
 
                 # Chart formatting
-                ax.set_ylim(bottom=0, top=investment*10)  # Ensure bottom alignment
+                ax.set_ylim(bottom=0, top=investment*10)
                 ax.set_xlim(0, 252*10 + 100)
                 ax.set_title("Monte Carlo Projections with Confidence Bounds", 
-                            fontsize=14, pad=25)  # Increased title padding
+                            fontsize=14, pad=25)
+                ax.set_xlabel("Trading Days", fontsize=12)
+                ax.set_ylabel("Portfolio Value (€)", fontsize=12)
+                ax.grid(True, linestyle='--', alpha=0.2)
+                ax.legend(loc='upper left', frameon=True, facecolor='white')
+                ax.yaxis.set_major_formatter(
+                    plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
                 
+                st.pyplot(fig)
