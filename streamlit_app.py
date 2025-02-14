@@ -6,6 +6,8 @@ import streamlit as st
 from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import risk_models, expected_returns
 
+# Rest of your original code remains unchanged
+
 # Configure page
 st.set_page_config(page_title="Smart Portfolio Manager", layout="wide")
 st.title('AI-Driven Portfolio Management')
