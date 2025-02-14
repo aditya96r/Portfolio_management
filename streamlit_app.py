@@ -7,50 +7,67 @@ from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import risk_models, expected_returns
 
 # Configure page
-st.set_page_config(page_title="Advanced Portfolio Optimizer", layout="wide")
-st.title('Professional Portfolio Manager')
+st.set_page_config(page_title="Professional Portfolio Manager", layout="wide")
+st.title('Advanced Wealth Optimizer')
 st.write("""
-### Institutional-Grade Asset Allocation with Risk Management
+### Institutional-Grade Portfolio Construction with Risk Management
 """)
 
+# Sanitized asset universe with crypto
 ASSET_UNIVERSE = {
     'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOG': 'Tech',
     'SPY': 'Equity', 'TLT': 'Bonds', 'GLD': 'Commodities',
     'JPM': 'Financials', 'XOM': 'Energy', 'ARKK': 'Innovation',
-    'BTC-USD': 'Crypto', 'ETH-USD': 'Crypto'
+    'BTCUSD': 'Crypto', 'ETHUSD': 'Crypto'  # Hyphens removed
 }
 
+def sanitize_tickers(tickers):
+    """Ensure ticker compatibility"""
+    return [t.replace('-', '') for t in tickers]
+
 def fetch_data():
-    """Robust data fetcher with validation"""
+    """Robust data fetcher with sanitization"""
     try:
+        raw_tickers = list(ASSET_UNIVERSE.keys())
         data = yf.download(
-            list(ASSET_UNIVERSE.keys()),
+            sanitize_tickers(raw_tickers),
             period="3y",
             interval="1d",
             group_by='ticker',
             progress=False
         )
+        
+        # Process and sanitize column names
         if isinstance(data.columns, pd.MultiIndex):
-            return data.xs('Close', level=1, axis=1).ffill().dropna(axis=1)
-        return data['Close'].ffill().dropna(axis=1)
+            data.columns = [f"{col[0]}_{col[1]}" for col in data.columns]
+            close_prices = data.filter(like='_Close')
+            close_prices.columns = [col.split('_')[0] for col in close_prices.columns]
+        else:
+            close_prices = data['Close'].to_frame()
+        
+        # Sanitize and validate
+        close_prices.columns = sanitize_tickers(close_prices.columns)
+        valid_tickers = [t for t in ASSET_UNIVERSE if t in close_prices.columns]
+        return close_prices[valid_tickers].ffill().dropna(axis=1)
+    
     except Exception as e:
         st.error(f"Data error: {str(e)}")
         return pd.DataFrame()
 
 def calculate_risk_profile(answers):
-    """Improved aggressive scoring system"""
+    """Improved risk scoring thresholds"""
     score = (
-        (5 - (answers['horizon']/2)) * 0.3 +  # Reduced horizon impact
-        {"0-10%": 1, "10-20%": 2, "20-30%": 3, "30%+": 4}[answers['loss_tolerance']] * 0.6 +  # Increased weight
-        {"Novice": 1, "Intermediate": 2, "Expert": 3}[answers['knowledge']] * 0.1 +
-        (answers['age'] < 40) * 2.5  # Strong age impact
+        (6 - (answers['horizon'] / 1.5)) * 0.4 +  # More aggressive horizon impact
+        {"0-10%": 1, "10-20%": 2, "20-30%": 4, "30%+": 6}[answers['loss_tolerance']] * 0.6 +  # Higher weights
+        {"Novice": 1, "Intermediate": 3, "Expert": 5}[answers['knowledge']] * 0.2 +
+        (answers['age'] < 45) * 3  # Strong age impact
     )
-    if score < 3.0: return "Conservative"
-    elif score < 4.5: return "Moderate"
+    if score < 4.0: return "Conservative"
+    elif score < 7.0: return "Moderate"
     else: return "Aggressive"
 
 def optimize_portfolio(risk_profile, data):
-    """Portfolio construction engine"""
+    """Error-proof portfolio construction"""
     if data.empty or len(data.columns) < 3:
         return {}
     
@@ -60,23 +77,25 @@ def optimize_portfolio(risk_profile, data):
         
         if risk_profile == "Conservative":
             ef = EfficientFrontier(None, S)
-            ef.add_constraint(lambda w: w <= 0.15)
+            ef.add_constraint(lambda w: w <= 0.1)
             ef.min_volatility()
             
         elif risk_profile == "Moderate":
             momentum = data.pct_change(90).mean()
             volatility = data.pct_change().std()
-            selected = (momentum / volatility).nlargest(8).index.tolist()
+            selected = (momentum / volatility).nlargest(10).index.tolist()
+            
+            # Fresh EF instance for selected assets
             ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
             ef.add_objective(objective_functions.L2_reg)
             ef.max_sharpe()
             
-        else:
+        else:  # Aggressive
             ef = EfficientFrontier(mu, S)
-            ef.add_objective(objective_functions.L2_reg, gamma=0.02)
-            crypto_assets = [t for t in data.columns if ASSET_UNIVERSE[t] == 'Crypto']
+            ef.add_objective(objective_functions.L2_reg, gamma=0.01)  # Minimal regularization
+            crypto_assets = [t for t in data.columns if ASSET_UNIVERSE.get(t) == 'Crypto']
             if crypto_assets:
-                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.4)
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.45)
             ef.max_sharpe()
 
         return ef.clean_weights()
@@ -119,7 +138,7 @@ with st.sidebar:
             'age': st.number_input("Age", 18, 100, 35)
         }
         risk_profile = calculate_risk_profile(risk_answers)
-        st.metric("Risk Profile", risk_profile)
+        st.metric("Your Risk Profile", risk_profile)
     
     investment = st.number_input("Investment Amount (€)", 1000, 1000000, 100000)
 
@@ -166,9 +185,10 @@ if st.button("Generate Portfolio"):
         if investment > 0 and metrics.get('annual_return'):
             with st.expander(f"Growth Projection - €{investment:,.0f}", expanded=False):
                 fig, ax = plt.subplots(figsize=(10, 6))
+                periods = [3, 5, 7, 10]
                 colors = ['blue', 'green', 'orange', 'red']
                 
-                for years, color in zip([3, 5, 7, 10], colors):
+                for years, color in zip(periods, colors):
                     simulations = 300
                     daily_returns = np.random.normal(
                         metrics['annual_return']/252,
@@ -177,14 +197,13 @@ if st.button("Generate Portfolio"):
                     )
                     growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
                     
-                    # Plot median trajectory
                     ax.plot(pd.DataFrame(growth).median(axis=1), 
                            color=color, 
+                           linewidth=2,
                            label=f'{years} Years')
                 
-                ax.set_title("Long-Term Growth Projection")
+                ax.set_title("Long-Term Growth Projection (Median Scenario)")
                 ax.set_xlabel("Trading Days")
                 ax.set_ylabel("Portfolio Value (€)")
                 ax.legend()
                 st.pyplot(fig)
-
