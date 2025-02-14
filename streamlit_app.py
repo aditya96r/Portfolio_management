@@ -272,7 +272,7 @@ if st.button("Generate Portfolio"):
                     sim_text,
                     transform=ax.transAxes,
                     ha='left',
-                    va='bottom',
+                    va='center',
                     fontsize=9,
                     bbox=dict(facecolor='white', alpha=0.8)
                 )  # Proper closing parenthesis added
