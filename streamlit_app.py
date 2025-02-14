@@ -233,24 +233,21 @@ if st.button("Generate Portfolio"):
                         label=f'{years}Y Median'
                     )
                     
-                    # Final value annotation with staggered placement
-                    vertical_offset = 40 if years in [3,7] else -40
+                    # Final value annotation
+                    final_value = median_growth.iloc[-1]
+                    label = (f"€{final_value/1e6:.2f}M" if final_value >= 1e6 
+                            else f"€{final_value/1e3:.0f}K")
+                    
                     ax.annotate(
-                        f"€{median_growth.iloc[-1]/1e6:.2f}M",
-                        xy=(len(median_growth)-1, median_growth.iloc[-1]),
-                        xytext=(35, vertical_offset),
+                        label,
+                        xy=(len(median_growth)-1, final_value),
+                        xytext=(25, 0),
                         textcoords='offset points',
                         color=color,
                         fontsize=12,
                         weight='bold',
                         ha='left',
                         va='center',
-                        arrowprops=dict(
-                            arrowstyle="-|>",
-                            color=color,
-                            lw=1.5,
-                            alpha=0.8
-                        ),
                         bbox=dict(
                             boxstyle='round,pad=0.3',
                             fc='white',
@@ -263,20 +260,21 @@ if st.button("Generate Portfolio"):
                 # Simulation details annotation
                 sim_text = (
                     f"Monte Carlo Parameters:\n"
-                    f"- Simulations: 500 paths\n"
+                    f"- Simulations: 500 paths per projection\n"
                     f"- Model: Geometric Brownian Motion\n"
-                    f"- μ = {metrics['annual_return']:.1%}\n" 
-                    f"- σ = {metrics['annual_volatility']:.1%}"
+                    f"- Annual Return (μ): {metrics['annual_return']:.1%}\n"
+                    f"- Annual Volatility (σ): {metrics['annual_volatility']:.1%}"
                 )
                 ax.text(
-                    0.02, 0.02,
+                    0.02, 0.98,
                     sim_text,
                     transform=ax.transAxes,
                     ha='left',
-                    va='bottom',
+                    va='top',
                     fontsize=10,
                     bbox=dict(facecolor='white', alpha=0.8)
-                
+                )  # Fixed closing parenthesis here
+
                 ax.set_title("Monte Carlo Projections with Confidence Bounds (10th-90th Percentile)", 
                             fontsize=14, pad=15)
                 ax.set_xlabel("Trading Days", fontsize=12)
