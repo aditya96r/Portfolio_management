@@ -233,7 +233,7 @@ if st.button("Generate Portfolio"):
                         label=f'{years}Y Median'
                     )
                     
-                    # Final value annotation with staggered placement
+                    # Final value annotation
                     vertical_offset = 40 if years in [3,7] else -40
                     ax.annotate(
                         f"€{median_growth.iloc[-1]/1e6:.2f}M" if median_growth.iloc[-1] >= 1e6 else f"€{median_growth.iloc[-1]/1e3:.0f}K",
@@ -260,7 +260,7 @@ if st.button("Generate Portfolio"):
                         )
                     )
 
-                # Simulation details annotation
+                # Simulation details annotation (FIXED HERE)
                 sim_text = (
                     f"Monte Carlo Parameters:\n"
                     f"- 500 simulations per projection\n"
@@ -275,11 +275,11 @@ if st.button("Generate Portfolio"):
                     va='bottom',
                     fontsize=9,
                     bbox=dict(facecolor='white', alpha=0.8)
-                
-                # Adjust plot boundaries
+                )  # Proper closing parenthesis added
+
+                # Chart formatting
                 ax.set_ylim(0, investment * 10)
                 ax.set_xlim(0, 252*10 + 100)
-                
                 ax.set_title("Monte Carlo Projections with Confidence Bounds", 
                             fontsize=14, pad=15)
                 ax.set_xlabel("Trading Days", fontsize=12)
