@@ -7,159 +7,203 @@ from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import risk_models, expected_returns
 
 # Configure page
-st.set_page_config(page_title="Smart Portfolio Manager", layout="wide")
-st.title('AI-Driven Portfolio Management')
+st.set_page_config(page_title="Crypto-Integrated Portfolio Manager", layout="wide")
+st.title('AI-Driven Portfolio Management with Crypto Assets')
 st.write("""
-### Dynamic Portfolio Optimization using Modern Portfolio Theory
+### Next-Gen Portfolio Optimization Combining Traditional and Digital Assets
 """)
 
-# Enhanced stock universe with sector information
+# Enhanced universe with crypto assets and sector info
 STOCK_UNIVERSE = {
-    'AAPL': 'Technology', 'MSFT': 'Technology', 'GOOG': 'Communication',
-    'AMZN': 'Consumer Discretionary', 'TSLA': 'Consumer Discretionary',
-    'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'MRK': 'Healthcare',
-    'JPM': 'Financial', 'BAC': 'Financial', 'GS': 'Financial',
-    'WMT': 'Consumer Staples', 'TGT': 'Consumer Staples', 'COST': 'Consumer Staples',
-    'XOM': 'Energy', 'CVX': 'Energy', 'UNH': 'Healthcare',
-    'PG': 'Consumer Staples', 'DIS': 'Communication', 'NKE': 'Consumer Discretionary'
+    # Traditional Assets
+    'AAPL': 'Technology', 'MSFT': 'Technology', 'GOOG': 'Tech',
+    'AMZN': 'Retail', 'TSLA': 'Auto', 'JPM': 'Financial',
+    'GS': 'Financial', 'BTC-USD': 'Crypto', 'ETH-USD': 'Crypto',
+    'XRP-USD': 'Crypto', 'SPY': 'ETF', 'GLD': 'Commodity',
+    'TLT': 'Bonds', 'BNB-USD': 'Crypto', 'ADA-USD': 'Crypto'
 }
 
 def get_sector(ticker):
-    """Get sector information with fallback"""
+    """Get asset class with crypto detection"""
     return STOCK_UNIVERSE.get(ticker, 'Other')
 
 def fetch_data():
-    """Fetch historical data with error handling"""
-    valid_tickers = [t for t in STOCK_UNIVERSE.keys() if yf.Ticker(t).history(period='1mo').shape[0] > 0]
-    
-    if not valid_tickers:
-        st.error("No valid tickers available")
-        return pd.DataFrame()
-    
+    """Fetch data with crypto integration"""
     try:
-        data = yf.download(list(STOCK_UNIVERSE.keys()), period="1y", interval="1d")['Adj Close']
-        return data.dropna(axis=1)
+        data = yf.download(
+            list(STOCK_UNIVERSE.keys()),
+            period="1y",
+            interval="1d",
+            group_by='ticker',
+            progress=False
+        )
+        
+        # Handle multi-index DataFrame
+        if isinstance(data.columns, pd.MultiIndex):
+            adj_close = data.xs('Close', level=1, axis=1)
+        else:
+            adj_close = data['Close'].to_frame()
+            
+        return adj_close.ffill().dropna(axis=1)
+    
     except Exception as e:
         st.error(f"Data error: {str(e)}")
         return pd.DataFrame()
 
+def calculate_risk_profile(investment_horizon, risk_tolerance, experience):
+    """Dynamic risk profile calculation"""
+    score = 0
+    # Investment horizon scoring
+    horizon_map = {"<1 year": 1, "1-3 years": 3, "3-5 years": 5, "5+ years": 7}
+    score += horizon_map.get(investment_horizon, 3)
+    
+    # Risk tolerance direct score
+    score += risk_tolerance
+    
+    # Experience weighting
+    exp_map = {"Beginner": 0.5, "Intermediate": 1, "Advanced": 1.5}
+    score *= exp_map.get(experience, 1)
+    
+    if score < 5: return "Conservative"
+    elif score < 10: return "Moderate"
+    else: return "Aggressive"
+
 def optimize_portfolio(risk_profile, data):
-    """Portfolio optimization using different theories"""
-    if data.empty or len(data.columns) < 2:
+    """Crypto-integrated portfolio optimization"""
+    if data.empty or len(data.columns) < 3:
         return {}
     
-    # Calculate expected returns and covariance matrix
-    mu = expected_returns.mean_historical_return(data)
-    S = risk_models.sample_cov(data)
-    
     try:
+        mu = expected_returns.mean_historical_return(data)
+        S = risk_models.sample_cov(data)
+        
         if risk_profile == "Conservative":
-            # Minimum Variance Portfolio (Markowitz)
             ef = EfficientFrontier(mu, S)
             ef.min_volatility()
+            ef.add_constraint(lambda w: w <= 0.15)  # Concentration limit
             
         elif risk_profile == "Moderate":
-            # Factor-based optimization
+            # Factor investing with momentum and volatility
             momentum = data.pct_change().mean()
-            value = data.iloc[-1] / data.iloc[-252]  # 1-year price ratio
+            volatility = data.pct_change().std()
+            factor_score = momentum/volatility
             
-            # Combine factors
-            combined = 0.5*momentum.rank() + 0.5*value.rank()
-            selected = combined.nlargest(10).index
-            
-            # Optimize on selected stocks
+            selected = factor_score.nlargest(15).index.tolist()
             ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
             ef.max_sharpe()
             
         else:  # Aggressive
-            # Classic Markowitz optimization
+            # Markowitz with crypto tilt
             ef = EfficientFrontier(mu, S)
-            ef.add_objective(objective_functions.L2_reg)
-            ef.max_sharpe()
+            ef.add_objective(objective_functions.L2_reg, gamma=0.1)
             
+            # Force minimum crypto allocation (20-40%)
+            crypto_tickers = [t for t in data.columns if get_sector(t) == 'Crypto']
+            if crypto_tickers:
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_tickers) >= 0.2)
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_tickers) <= 0.4)
+            
+            ef.max_sharpe()
+        
         weights = ef.clean_weights()
         return {k: v for k, v in weights.items() if v > 0.01}
     
     except Exception as e:
-        st.error(f"Optimization failed: {str(e)}")
+        st.error(f"Optimization error: {str(e)}")
         return {}
 
-def create_industry_chart(weights):
-    """Create pie chart by industry sectors"""
+def create_allocation_chart(weights):
+    """Create pie chart with crypto highlight"""
     sector_allocation = {}
+    crypto_exposure = 0
     for ticker, weight in weights.items():
         sector = get_sector(ticker)
+        if sector == 'Crypto':
+            crypto_exposure += weight
         sector_allocation[sector] = sector_allocation.get(sector, 0) + weight
     
-    sectors = list(sector_allocation.keys())
-    allocations = list(sector_allocation.values())
+    # Explode crypto slice if present
+    explode = [0.1 if s == 'Crypto' else 0 for s in sector_allocation.keys()]
     
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.pie(allocations, labels=sectors, autopct='%1.1f%%',
-           colors=plt.cm.tab20.colors,
-           wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
-    ax.set_title("Industry Allocation")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.pie(sector_allocation.values(), labels=sector_allocation.keys(),
+           autopct='%1.1f%%', startangle=90, explode=explode,
+           colors=plt.cm.tab20.colors, wedgeprops={'linewidth': 1, 'edgecolor': 'white'})
+    ax.set_title(f"Portfolio Allocation (Crypto Exposure: {crypto_exposure:.1%})")
     return fig
 
-# Risk Profile Selection
-risk_profile = st.sidebar.selectbox(
-    "Select Risk Profile",
-    ["Conservative", "Moderate", "Aggressive"],
-    index=1
-)
+# Risk Profiling Sidebar
+with st.sidebar:
+    st.header("Investor Profile")
+    investment_horizon = st.selectbox(
+        "Investment Horizon",
+        ["<1 year", "1-3 years", "3-5 years", "5+ years"],
+        index=2
+    )
+    risk_tolerance = st.slider("Risk Tolerance (1-10)", 1, 10, 5)
+    experience = st.selectbox(
+        "Trading Experience",
+        ["Beginner", "Intermediate", "Advanced"]
+    )
+    risk_profile = calculate_risk_profile(investment_horizon, risk_tolerance, experience)
+    st.markdown(f"**Calculated Risk Profile:** {risk_profile}")
 
-if st.button("Generate Portfolio"):
-    with st.spinner("Optimizing portfolio..."):
+# Main Application
+if st.button("Generate Optimal Portfolio"):
+    with st.spinner("Building next-gen portfolio..."):
         data = fetch_data()
         if data.empty:
+            st.error("Failed to load market data")
             st.stop()
         
         weights = optimize_portfolio(risk_profile, data)
         if not weights:
-            st.error("Optimization failed")
+            st.error("Portfolio optimization failed")
             st.stop()
         
-        # Calculate statistics using proper alignment
+        # Calculate returns with proper alignment
         returns = data[list(weights.keys())].pct_change().mean()
         portfolio_return = np.dot(list(weights.values()), returns)
         
         # Display results
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([2, 1])
         
         with col1:
-            st.subheader("Portfolio Composition")
-            fig = create_industry_chart(weights)
+            st.subheader("Asset Allocation")
+            fig = create_allocation_chart(weights)
             st.pyplot(fig)
-        
+            
         with col2:
             st.subheader("Portfolio Details")
-            st.write(f"**Risk Profile:** {risk_profile}")
-            st.write(f"**Number of Assets:** {len(weights)}")
-            st.write(f"**Expected Annual Return:** {portfolio_return*252:.1%}")
+            st.metric("Risk Profile", risk_profile)
+            st.metric("Crypto Exposure", 
+                     f"{sum(weights[t] for t in weights if get_sector(t) == 'Crypto'):.1%}")
+            st.metric("Expected Annual Return", f"{portfolio_return*252:.1%}")
             
-            st.subheader("Top Holdings")
-            for ticker, weight in sorted(weights.items(), key=lambda x: x[1], reverse=True)[:5]:
-                st.write(f"{ticker} ({get_sector(ticker)}): {weight:.1%}")
+            st.write("**Top Holdings:**")
+            for ticker, weight in sorted(weights.items(), key=lambda x: -x[1])[:5]:
+                st.write(f"- {ticker}: {weight:.1%}")
 
-        st.subheader("Portfolio Theory Used")
+        st.subheader("Strategy Breakdown")
         if risk_profile == "Conservative":
             st.markdown("""
-            **Minimum Variance Portfolio (Markowitz)**
-            - Minimizes portfolio volatility
-            - Suitable for risk-averse investors
-            - Focuses on low-volatility assets
+            **Capital Preservation Strategy**
+            - Minimum volatility portfolio (Markowitz)
+            - Maximum 15% allocation to single asset
+            - No crypto exposure
             """)
         elif risk_profile == "Moderate":
             st.markdown("""
-            **Factor-Based Optimization**
-            - Combines momentum and value factors
-            - Balances growth and stability
-            - Targets risk-adjusted returns
+            **Smart Beta Strategy**
+            - Combines momentum and low volatility factors
+            - Balanced crypto exposure (0-20%)
+            - Sector-diversified equity portfolio
             """)
         else:
             st.markdown("""
-            **Maximum Sharpe Ratio (Markowitz)**
-            - Maximizes return per unit of risk
-            - Uses L2 regularization for stability
-            - Aggressive growth orientation
+            **Aggressive Growth Strategy**
+            - Markowitz optimization with crypto tilt (20-40%)
+            - L2 regularization for stability
+            - High-growth tech and crypto assets
             """)
+
