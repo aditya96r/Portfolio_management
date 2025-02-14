@@ -1,14 +1,10 @@
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt  
+import matplotlib.pyplot as plt
 import streamlit as st
 from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import risk_models, expected_returns
-
-# Rest of your original code remains unchanged
-# ... [your existing code] ...
-# Rest of your original code remains unchanged
 
 # Configure page
 st.set_page_config(page_title="Smart Portfolio Manager", layout="wide")
@@ -17,69 +13,111 @@ st.write("""
 ### Dynamic Portfolio Optimization using Modern Finance Theory
 """)
 
-# List of 20 stocks across different industries
+# List of 20 stocks across different industries with validation
 STOCK_UNIVERSE = [
     'AAPL', 'MSFT', 'GOOG', 'AMZN', 'TSLA',    # Tech
-    'JNJ', 'PFE', 'MRK',                         # Healthcare
-    'JPM', 'BAC', 'GS',                          # Financials
-    'WMT', 'TGT', 'COST',                        # Retail
-    'XOM', 'CVX',                                 # Energy
-    'UNH', 'PG', 'DIS', 'NKE'                    # Diverse sectors
+    'JNJ', 'PFE', 'MRK',                       # Healthcare
+    'JPM', 'BAC', 'GS',                        # Financials
+    'WMT', 'TGT', 'COST',                      # Retail
+    'XOM', 'CVX',                              # Energy
+    'UNH', 'PG', 'DIS', 'NKE'                  # Diverse sectors
 ]
 
+def get_valid_tickers(tickers):
+    """Filter out invalid/unavailable tickers"""
+    valid = []
+    for t in tickers:
+        try:
+            if yf.Ticker(t).info['regularMarketPrice']:
+                valid.append(t)
+        except:
+            continue
+    return valid
+
 def fetch_data():
-    """Fetch historical stock data"""
-    data = yf.download(tickers=STOCK_UNIVERSE, period="1y", interval="1d")['Adj Close']
-    return data.dropna(axis=1)
+    """Fetch historical stock data with error handling"""
+    valid_tickers = get_valid_tickers(STOCK_UNIVERSE)
+    if not valid_tickers:
+        return pd.DataFrame()
+    
+    try:
+        data = yf.download(
+            tickers=valid_tickers,
+            period="1y",
+            interval="1d",
+            group_by='ticker',
+            progress=False
+        )
+        # Safely access Adjusted Close prices
+        adj_close = data.xs('Adj Close', level=1, axis=1)
+        return adj_close.dropna(axis=1)
+    except Exception as e:
+        st.error(f"Data retrieval error: {str(e)}")
+        return pd.DataFrame()
 
 def calculate_momentum(data):
     """Calculate momentum factor (3-month returns)"""
     returns = data.pct_change().dropna()
-    momentum = returns.last('3M').mean()
-    return momentum
+    return returns.last('3M').mean()
 
 def calculate_value(data):
-    """Calculate value factor (P/E ratio)"""
+    """Calculate value factor (P/E ratio) with error handling"""
     pe_ratios = {}
     for ticker in data.columns:
         try:
-            pe = yf.Ticker(ticker).info['trailingPE']
-            pe_ratios[ticker] = pe if pe else np.nan
+            pe = yf.Ticker(ticker).info.get('trailingPE', np.nan)
+            pe_ratios[ticker] = pe if not None else np.nan
         except:
             pe_ratios[ticker] = np.nan
-    return pd.Series(pe_ratios)
+    return pd.Series(pe_ratios).replace(np.inf, np.nan).dropna()
 
 def optimize_portfolio(risk_category, data):
     """Optimize portfolio based on risk category"""
+    if data.empty:
+        return {}
+        
     returns = expected_returns.mean_historical_return(data)
     cov_matrix = risk_models.sample_cov(data)
     
-    ef = EfficientFrontier(returns, cov_matrix)
-    
-    if risk_category == "Aggressive":
-        ef.add_objective(objective_functions.L2_reg)
-        ef.max_sharpe()
-    elif risk_category == "Moderate":
-        # Factor investing: 50% momentum, 50% value
-        momentum = calculate_momentum(data)
-        value = calculate_value(data)
-        combined_score = 0.5*momentum.rank() + 0.5*(1/value.rank())
-        selected_stocks = combined_score.nlargest(10).index.tolist()
-        filtered_returns = returns[selected_stocks]
-        filtered_cov = cov_matrix.loc[selected_stocks, selected_stocks]
-        ef = EfficientFrontier(filtered_returns, filtered_cov)
-        ef.max_sharpe()
-    else:  # Conservative
-        volatility = data.pct_change().std().nsmallest(5)
-        return {ticker: 1/len(volatility) for ticker in volatility.index}
-    
-    weights = ef.clean_weights()
-    return {k: v for k, v in weights.items() if v > 0.01}
+    try:
+        if risk_category == "Aggressive":
+            ef = EfficientFrontier(returns, cov_matrix)
+            ef.add_objective(objective_functions.L2_reg)
+            ef.max_sharpe()
+            weights = ef.clean_weights()
+            
+        elif risk_category == "Moderate":
+            # Factor investing: 50% momentum, 50% value
+            momentum = calculate_momentum(data)
+            value = calculate_value(data)
+            
+            # Normalize and combine scores
+            momentum_norm = momentum.rank(pct=True)
+            value_norm = (1/value.rank(pct=True))  # Lower P/E is better
+            
+            combined_score = 0.5*momentum_norm + 0.5*value_norm
+            selected = combined_score.nlargest(10).index.tolist()
+            
+            # Optimize on selected stocks
+            ef = EfficientFrontier(returns[selected], cov_matrix.loc[selected, selected])
+            ef.max_sharpe()
+            weights = ef.clean_weights()
+            
+        else:  # Conservative
+            volatility = data.pct_change().std().nsmallest(5)
+            weights = {t: 1/len(volatility) for t in volatility.index}
+            
+        return {k: v for k, v in weights.items() if v > 0.01}
+        
+    except Exception as e:
+        st.error(f"Optimization error: {str(e)}")
+        return {}
 
 # Risk Assessment Sidebar
 with st.sidebar:
     st.header("Investor Profile")
-    investment_horizon = st.selectbox("Investment Horizon", ["Short-term (1-3 years)", "Medium-term (3-5 years)", "Long-term (5+ years)"])
+    investment_horizon = st.selectbox("Investment Horizon", 
+        ["Short-term (1-3 years)", "Medium-term (3-5 years)", "Long-term (5+ years)"])
     risk_tolerance = st.slider("Risk Tolerance (1-10)", 1, 10, 5)
     experience = st.selectbox("Experience Level", ["Beginner", "Intermediate", "Advanced"])
 
@@ -88,6 +126,10 @@ if st.button("Build Optimal Portfolio"):
     with st.spinner("Crunching numbers using Modern Portfolio Theory..."):
         data = fetch_data()
         
+        if data.empty:
+            st.error("No valid financial data could be retrieved. Please try different assets.")
+            st.stop()
+            
         # Determine risk category
         if risk_tolerance <= 3:
             risk_category = "Conservative"
@@ -101,6 +143,10 @@ if st.button("Build Optimal Portfolio"):
 
         # Optimize stock portfolio
         stock_weights = optimize_portfolio(risk_category, data)
+        if not stock_weights:
+            st.error("Failed to optimize portfolio. Please adjust your parameters.")
+            st.stop()
+            
         stock_percentage = allocation["Stocks"]
         
         # Create full allocation
@@ -153,5 +199,3 @@ if st.button("Build Optimal Portfolio"):
         - **Markowitz Optimization (Aggressive):** Maximizes Sharpe ratio using Modern Portfolio Theory
         - **Conservative Portfolio:** Focuses on low-volatility blue-chip stocks
         """)
-
-# Run with: streamlit run portfolio_manager.py
