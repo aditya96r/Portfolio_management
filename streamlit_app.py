@@ -41,16 +41,16 @@ def calculate_risk_profile(answers):
     """Improved aggressive scoring system"""
     score = (
         (5 - (answers['horizon']/2)) * 0.3 +  # Reduced horizon impact
-        {"0-10%": 1, "10-20%": 2, "20-30%": 3, "30%+": 4}[answers['loss_tolerance']] * 0.5 +  # Increased weight
+        {"0-10%": 1, "10-20%": 2, "20-30%": 3, "30%+": 4}[answers['loss_tolerance']] * 0.6 +  # Increased weight
         {"Novice": 1, "Intermediate": 2, "Expert": 3}[answers['knowledge']] * 0.1 +
-        (answers['age'] < 40) * 2  # Strong age impact
+        (answers['age'] < 40) * 2.5  # Strong age impact
     )
-    if score < 3.5: return "Conservative"
-    elif score < 5.5: return "Moderate"
+    if score < 3.0: return "Conservative"
+    elif score < 4.5: return "Moderate"
     else: return "Aggressive"
 
 def optimize_portfolio(risk_profile, data):
-    """Error-proof portfolio construction"""
+    """Portfolio construction engine"""
     if data.empty or len(data.columns) < 3:
         return {}
     
@@ -67,18 +67,16 @@ def optimize_portfolio(risk_profile, data):
             momentum = data.pct_change(90).mean()
             volatility = data.pct_change().std()
             selected = (momentum / volatility).nlargest(8).index.tolist()
-            
-            # Create new EF instance for selected assets
             ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
             ef.add_objective(objective_functions.L2_reg)
             ef.max_sharpe()
             
-        else:  # Aggressive
+        else:
             ef = EfficientFrontier(mu, S)
-            ef.add_objective(objective_functions.L2_reg, gamma=0.05)  # Reduced regularization
+            ef.add_objective(objective_functions.L2_reg, gamma=0.02)
             crypto_assets = [t for t in data.columns if ASSET_UNIVERSE[t] == 'Crypto']
             if crypto_assets:
-                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.35)
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.4)
             ef.max_sharpe()
 
         return ef.clean_weights()
@@ -94,9 +92,6 @@ def calculate_metrics(weights, data):
         valid_assets = [a for a in weights if a in returns.columns]
         aligned_weights = np.array([weights[a] for a in valid_assets])
         
-        if len(valid_assets) == 0:
-            return {}
-            
         portfolio_returns = returns[valid_assets].dot(aligned_weights)
         
         return {
@@ -119,7 +114,7 @@ with st.sidebar:
             'horizon': st.slider("Investment Horizon (Years)", 1, 10, 3),
             'loss_tolerance': st.select_slider("Max Loss Tolerance", 
                                              options=["0-10%", "10-20%", "20-30%", "30%+"],
-                                             value="20-30%"),
+                                             value="30%+"),
             'knowledge': st.radio("Market Experience", ["Novice", "Intermediate", "Expert"]),
             'age': st.number_input("Age", 18, 100, 35)
         }
@@ -170,19 +165,24 @@ if st.button("Generate Portfolio"):
         # Growth Projection
         if investment > 0 and metrics.get('annual_return'):
             with st.expander(f"Growth Projection - €{investment:,.0f}", expanded=False):
-                years = st.select_slider("Projection Period", [5, 10], 5)
-                simulations = 500
-                daily_returns = np.random.normal(
-                    metrics['annual_return']/252,
-                    metrics['annual_volatility']/np.sqrt(252),
-                    (252*years, simulations)
-                )
-                growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
-                
                 fig, ax = plt.subplots(figsize=(10, 6))
-                ax.plot(growth, alpha=0.1, color='steelblue')
-                ax.plot(pd.DataFrame(growth).median(axis=1), color='darkorange', linewidth=2, label='Median')
-                ax.set_title(f"{years}-Year Growth Potential")
+                colors = ['blue', 'green', 'orange', 'red']
+                
+                for years, color in zip([3, 5, 7, 10], colors):
+                    simulations = 300
+                    daily_returns = np.random.normal(
+                        metrics['annual_return']/252,
+                        metrics['annual_volatility']/np.sqrt(252),
+                        (252*years, simulations)
+                    )
+                    growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
+                    
+                    # Plot median trajectory
+                    ax.plot(pd.DataFrame(growth).median(axis=1), 
+                           color=color, 
+                           label=f'{years} Years')
+                
+                ax.set_title("Long-Term Growth Projection")
                 ax.set_xlabel("Trading Days")
                 ax.set_ylabel("Portfolio Value (€)")
                 ax.legend()
