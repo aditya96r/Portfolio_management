@@ -1,11 +1,13 @@
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  
 import streamlit as st
 from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import risk_models, expected_returns
 
+# Rest of your original code remains unchanged
+# ... [your existing code] ...
 # Rest of your original code remains unchanged
 
 # Configure page
