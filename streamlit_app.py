@@ -188,12 +188,3 @@ if st.button("Generate Portfolio"):
                 ax.legend()
                 st.pyplot(fig)
 
-# requirements.txt
-"""
-numpy==1.26.4
-pandas==2.2.2
-yfinance==0.2.52
-matplotlib==3.8.3
-streamlit==1.35.0
-pypfopt==1.5.5
-"""
