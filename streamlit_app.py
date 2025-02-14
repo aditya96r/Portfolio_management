@@ -233,22 +233,12 @@ if st.button("Generate Portfolio"):
                         label=f'{years}Y Median'
                     )
                     
-                    # Final value annotation with dynamic positioning
-                    x_pos = len(median_growth) - 1
-                    y_pos = median_growth.iloc[-1]
-                    
-                    # Unique offsets for each timeline
-                    offsets = {
-                        3: (40, 40),   # (horizontal, vertical)
-                        5: (40, -40),
-                        7: (40, 20),
-                        10: (40, -20)
-                    }[years]
-                    
+                    # Final value annotation with staggered placement
+                    vertical_offset = 40 if years in [3,7] else -40
                     ax.annotate(
-                        f"€{y_pos/1e6:.2f}M" if y_pos >= 1e6 else f"€{y_pos/1e3:.0f}K",
-                        xy=(x_pos, y_pos),
-                        xytext=offsets,
+                        f"€{median_growth.iloc[-1]/1e6:.2f}M" if median_growth.iloc[-1] >= 1e6 else f"€{median_growth.iloc[-1]/1e3:.0f}K",
+                        xy=(len(median_growth)-1, median_growth.iloc[-1]),
+                        xytext=(35, vertical_offset),
                         textcoords='offset points',
                         color=color,
                         fontsize=10,
@@ -270,7 +260,7 @@ if st.button("Generate Portfolio"):
                         )
                     )
 
-                # Simulation details moved to bottom-left
+                # Simulation details annotation
                 sim_text = (
                     f"Monte Carlo Parameters:\n"
                     f"- 500 simulations per projection\n"
