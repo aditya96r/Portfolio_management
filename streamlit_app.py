@@ -199,13 +199,3 @@ if st.button("Construct Optimal Portfolio"):
         plt.colorbar(ax3.collections[0], label='Sharpe Ratio')
         st.pyplot(fig3)
 
-# requirements.txt
-"""
-numpy==1.26.4
-pandas==2.2.2
-yfinance==0.2.52
-matplotlib==3.8.3
-streamlit==1.35.0
-pypfopt==1.5.5
-cvxpy==1.5.1
-"""
