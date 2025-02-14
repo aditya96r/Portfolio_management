@@ -7,98 +7,58 @@ from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import risk_models, expected_returns
 
 # Configure page
-st.set_page_config(page_title="Smart Portfolio Manager", layout="wide")
-st.title('Advanced Portfolio Optimizer with Crypto Integration')
+st.set_page_config(page_title="Advanced Portfolio Manager", layout="wide")
+st.title('Intelligent Wealth Builder')
 st.write("""
-### Multi-Strategy Allocation Combining Modern Portfolio Theory & Factor Investing
+### Crypto-Enhanced Portfolio Optimization with Growth Projections
 """)
 
-# Ticker configuration with sanitized names
+# Enhanced universe with crypto assets
 STOCK_UNIVERSE = {
-    'AAPL': 'Technology',
-    'MSFT': 'Technology', 
-    'GOOG': 'Tech',
-    'BNBUSD': 'Crypto',  # Sanitized ticker name
-    'ETHUSD': 'Crypto',
+    'AAPL': 'Technology', 
+    'MSFT': 'Technology',
+    'BTC-USD': 'Crypto',
+    'ETH-USD': 'Crypto',
+    'BNB-USD': 'Crypto',
+    'JPM': 'Financial',
+    'GS': 'Financial',
     'SPY': 'ETF',
-    'TLT': 'Bonds',
-    'GLD': 'Commodities',
-    'JPM': 'Financials',
-    'XOM': 'Energy'
+    'GLD': 'Commodity',
+    'TLT': 'Bonds'
 }
 
-def sanitize_tickers(tickers):
-    """Clean ticker names for compatibility"""
-    return [t.replace('-', '') for t in tickers]
-
 def fetch_data():
-    """Robust data fetching with sanitization"""
+    """Fetch data with crypto validation"""
     try:
-        raw_tickers = list(STOCK_UNIVERSE.keys())
         data = yf.download(
-            tickers=raw_tickers,
+            list(STOCK_UNIVERSE.keys()),
             period="1y",
             interval="1d",
             group_by='ticker',
-            progress=False,
-            auto_adjust=True
+            progress=False
         )
         
-        # Clean column names and handle multi-index
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = [f"{col[0]}_{col[1]}" for col in data.columns]
-            adj_close = data.filter(like='_Close')
-            adj_close.columns = [col.split('_')[0] for col in adj_close.columns]
-        else:
-            adj_close = data['Close'].to_frame()
-        
-        # Sanitize and filter
-        adj_close.columns = sanitize_tickers(adj_close.columns)
-        valid_tickers = [t for t in STOCK_UNIVERSE if t in adj_close.columns]
-        return adj_close[valid_tickers].ffill().dropna(axis=1)
-    
+        adj_close = data.xs('Close', level=1, axis=1) if isinstance(data.columns, pd.MultiIndex) else data['Close']
+        return adj_close.ffill().dropna(axis=1)
     except Exception as e:
         st.error(f"Data error: {str(e)}")
         return pd.DataFrame()
 
 def optimize_portfolio(risk_profile, data):
-    """Enhanced optimization with crypto handling"""
-    if data.empty or len(data.columns) < 2:
-        return {}
-
+    """Enhanced optimization with crypto enforcement"""
+    if data.empty: return {}
+    
     try:
-        # Convert column names to sanitized format
-        data.columns = sanitize_tickers(data.columns)
-        
         mu = expected_returns.mean_historical_return(data)
         S = risk_models.sample_cov(data)
         
-        if risk_profile == "Conservative":
-            # Markowitz Minimum Variance
-            ef = EfficientFrontier(mu, S)
-            ef.min_volatility()
-            
-        elif risk_profile == "Moderate":
-            # Factor-Based Strategy
-            momentum = data.pct_change().mean()
-            value = data.iloc[-252] / data.iloc[-504]  # 1-year momentum
-            factor_score = 0.7*momentum + 0.3*(1/value)
-            selected = factor_score.nlargest(8).index.tolist()
-            
-            ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
-            ef.max_sharpe()
-            
-        else:  # Aggressive
-            # Markowitz with Crypto Allocation
-            ef = EfficientFrontier(mu, S)
-            ef.add_objective(objective_functions.L2_reg, gamma=0.15)
-            
-            # Crypto constraints
-            crypto_tickers = [t for t in data.columns if STOCK_UNIVERSE.get(t) == 'Crypto']
+        ef = EfficientFrontier(mu, S)
+        
+        if risk_profile == "Aggressive":
+            ef.add_objective(objective_functions.L2_reg, gamma=0.1)
+            crypto_tickers = [t for t in data.columns if STOCK_UNIVERSE[t] == 'Crypto']
             if crypto_tickers:
-                ef.add_constraint(lambda w: sum(w[t] for t in crypto_tickers) >= 0.25)
-                ef.add_constraint(lambda w: sum(w[t] for t in crypto_tickers) <= 0.4)
-            
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_tickers) >= 0.25)
             ef.max_sharpe()
         
         weights = ef.clean_weights()
@@ -108,119 +68,73 @@ def optimize_portfolio(risk_profile, data):
         st.error(f"Optimization error: {str(e)}")
         return {}
 
-# Risk Profile Questionnaire
-with st.sidebar:
-    st.header("Investor Profile")
-    risk_tolerance = st.slider("Risk Tolerance (1-10)", 1, 10, 5,
-                              help="1 = Capital Preservation, 10 = Maximum Growth")
-    investment_horizon = st.selectbox("Investment Horizon", 
-                                    ["<3 years", "3-5 years", "5+ years"])
-    experience = st.selectbox("Experience Level", 
-                            ["Beginner", "Intermediate", "Advanced"])
+def calculate_growth(weights, data, initial=100000):
+    """Monte Carlo growth projection"""
+    returns = data.pct_change().dropna()
+    portfolio_returns = returns.dot(list(weights.values()))
     
-    # Calculate risk profile
-    risk_profile = "Conservative"
-    if risk_tolerance >= 7 or (risk_tolerance >=5 and investment_horizon == "5+ years"):
-        risk_profile = "Aggressive"
-    elif risk_tolerance >=4:
-        risk_profile = "Moderate"
-
-    st.markdown(f"**Recommended Profile:** {risk_profile}")
-
-def create_allocation_chart(weights):
-    """Enhanced allocation visualization"""
-    sector_allocation = {}
-    crypto_exposure = 0
+    # Simulation parameters
+    days = 252 * 5  # 5 years
+    simulations = 100
     
-    for ticker, weight in weights.items():
-        sector = STOCK_UNIVERSE.get(ticker, 'Other')
-        if sector == 'Crypto':
-            crypto_exposure += weight
-        sector_allocation[sector] = sector_allocation.get(sector, 0) + weight
+    # Generate random returns
+    mu = portfolio_returns.mean()
+    sigma = portfolio_returns.std()
+    daily_returns = np.random.normal(mu/252, sigma/np.sqrt(252), (days, simulations))
     
-    # Create visualization
-    fig, ax = plt.subplots(figsize=(10, 6))
-    colors = plt.cm.tab20(np.linspace(0, 1, len(sector_allocation)))
+    # Calculate growth paths
+    growth = initial * np.exp(np.cumsum(daily_returns, axis=0))
+    return growth
+
+# Risk Profile Interface
+risk_profile = st.sidebar.selectbox("Risk Profile", ["Conservative", "Moderate", "Aggressive"])
+
+if st.button("Generate Portfolio"):
+    data = fetch_data()
+    if data.empty: st.stop()
     
-    wedges, texts, autotexts = ax.pie(
-        sector_allocation.values(),
-        labels=sector_allocation.keys(),
-        autopct='%1.1f%%',
-        startangle=140,
-        colors=colors,
-        wedgeprops={'linewidth': 1, 'edgecolor': 'white'},
-        textprops={'fontsize': 10}
-    )
+    weights = optimize_portfolio(risk_profile, data)
+    if not weights: st.stop()
     
-    plt.setp(autotexts, size=10, weight="bold")
-    ax.set_title(f"Portfolio Allocation (Crypto: {crypto_exposure:.1%})", 
-                fontsize=16, pad=20)
-    return fig
+    # Calculate metrics
+    returns = data[weights.keys()].pct_change().mean().dot(weights.values())
+    volatility = np.sqrt(np.dot(list(weights.values()), 
+                        np.dot(data[weights.keys()].pct_change().cov(), 
+                               list(weights.values()))))
+    
+    # Visualization
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        # Individual Holdings Pie Chart
+        fig1, ax1 = plt.subplots()
+        ax1.pie(weights.values(), labels=weights.keys(),
+                autopct='%1.1f%%', startangle=90)
+        ax1.set_title("Individual Holdings Allocation")
+        st.pyplot(fig1)
+        
+    with col2:
+        # Sector Allocation
+        sector_allocation = pd.Series(weights).groupby(STOCK_UNIVERSE.get).sum()
+        fig2, ax2 = plt.subplots()
+        ax2.pie(sector_allocation, labels=sector_allocation.index,
+                autopct='%1.1f%%', startangle=90)
+        ax2.set_title("Sector Allocation")
+        st.pyplot(fig2)
+        
+    with col3:
+        st.metric("Expected Annual Return", f"{returns*252:.1%}")
+        st.metric("Portfolio Volatility", f"{volatility*np.sqrt(252):.1%}")
+        crypto_exposure = sum(weights[t] for t in weights if STOCK_UNIVERSE[t] == 'Crypto')
+        st.metric("Crypto Exposure", f"{crypto_exposure:.1%}")
 
-# Main Application Flow
-if st.button("Generate Optimal Portfolio"):
-    with st.spinner("Constructing optimized portfolio..."):
-        data = fetch_data()
-        if data.empty:
-            st.error("Failed to retrieve market data")
-            st.stop()
-        
-        weights = optimize_portfolio(risk_profile, data)
-        if not weights:
-            st.error("Portfolio optimization failed")
-            st.stop()
-        
-        # Ensure alignment between weights and data
-        valid_weights = {k: v for k, v in weights.items() if k in data.columns}
-        ordered_weights = {k: valid_weights[k] for k in data.columns if k in valid_weights}
-        
-        # Calculate returns safely
-        returns = data[list(ordered_weights.keys())].pct_change().mean()
-        portfolio_return = np.dot(list(ordered_weights.values()), returns)
-        
-        # Display results
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.subheader("Portfolio Allocation")
-            fig = create_allocation_chart(ordered_weights)
-            st.pyplot(fig)
-            
-        with col2:
-            st.subheader("Key Metrics")
-            st.metric("Risk Profile", risk_profile)
-            st.metric("Crypto Exposure", 
-                      f"{sum(ordered_weights.get(t, 0) for t in STOCK_UNIVERSE if STOCK_UNIVERSE[t] == 'Crypto'):.1%}")
-            st.metric("Expected Annual Return", f"{portfolio_return*252:.1%}")
-            
-            st.write("**Top Holdings:**")
-            for ticker, weight in sorted(ordered_weights.items(), 
-                                       key=lambda x: -x[1])[:3]:
-                st.write(f"- {ticker}: {weight:.1%}")
-
-        st.subheader("Strategy Breakdown")
-        if risk_profile == "Conservative":
-            st.markdown("""
-            **Capital Preservation Strategy**
-            - Minimum variance optimization (Markowitz)
-            - Maximum 15% single asset allocation
-            - No crypto exposure
-            - Focus on low-volatility assets
-            """)
-        elif risk_profile == "Moderate":
-            st.markdown("""
-            **Smart Beta Strategy**
-            - Combines momentum & value factors
-            - Limited crypto exposure (0-15%)
-            - Balanced sector allocation
-            - Monthly rebalancing
-            """)
-        else:
-            st.markdown("""
-            **Aggressive Growth Strategy**
-            - Markowitz optimization with crypto tilt (25-40%)
-            - L2 regularization for stability
-            - High-growth tech and crypto assets
-            - Weekly rebalancing
-            """)
-
+    # Growth Projection
+    st.subheader("€100,000 Growth Projection")
+    growth_paths = calculate_growth(weights, data)
+    fig3, ax3 = plt.subplots()
+    ax3.plot(growth_paths, alpha=0.1, color='b')
+    ax3.plot(pd.DataFrame(growth_paths).mean(axis=1), color='r', lw=2)
+    ax3.set_xlabel("Years")
+    ax3.set_ylabel("Portfolio Value (€)")
+    ax3.set_title("5-Year Growth Projection")
+    st.pyplot(fig3)
