@@ -54,7 +54,7 @@ def fetch_data():
 
 def calculate_risk_profile(answers):
     """Corrected risk scoring with accurate thresholds"""
-    horizon_score = (answers['horizon'] / 1.5) * 0.4  # Longer horizon increases score
+    horizon_score = (answers['horizon'] / 1.5) * 0.4
     loss_score = {
         "0-10%": 1, 
         "10-20%": 3, 
@@ -88,7 +88,7 @@ def optimize_portfolio(risk_profile, data):
         
         if risk_profile == "Conservative":
             ef = EfficientFrontier(None, S)
-            ef.add_constraint(lambda w: w <= 0.15)  # More diversified
+            ef.add_constraint(lambda w: w <= 0.15)
             ef.min_volatility()
             
         elif risk_profile == "Moderate":
@@ -191,14 +191,15 @@ if st.button("Generate Portfolio"):
                 st.metric("Conditional VaR", f"{metrics.get('cvar_95', 0):.1f}%")
                 st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1%}")
         
-        # Growth Projection with Annotations
+        # Enhanced Monte Carlo Projections
         if investment > 0 and metrics.get('annual_return'):
-            with st.expander(f"Growth Projection - €{investment:,.0f}", expanded=False):
-                fig, ax = plt.subplots(figsize=(10, 6))
+            with st.expander(f"Monte Carlo Projections - €{investment:,.0f}", expanded=False):
+                fig, ax = plt.subplots(figsize=(12, 7))
                 periods = [3, 5, 7, 10]
                 colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728']
+                band_alphas = [0.15, 0.12, 0.09, 0.06]
                 
-                for years, color in zip(periods, colors):
+                for years, color, alpha in zip(periods, colors, band_alphas):
                     simulations = 500
                     daily_returns = np.random.normal(
                         metrics['annual_return']/252,
@@ -206,30 +207,44 @@ if st.button("Generate Portfolio"):
                         (252*years, simulations)
                     )
                     growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
-                    median_growth = pd.DataFrame(growth).median(axis=1)
+                    growth_df = pd.DataFrame(growth)
                     
-                    # Plot growth line
-                    ax.plot(median_growth, 
-                           color=color, 
-                           linewidth=2.5,
-                           alpha=0.9,
-                           label=f'{years} Years')
+                    # Calculate confidence bands
+                    upper = growth_df.quantile(0.9, axis=1)
+                    lower = growth_df.quantile(0.1, axis=1)
+                    median_growth = growth_df.median(axis=1)
                     
-                    # Calculate final value
+                    # Plot confidence bands
+                    ax.fill_between(
+                        range(len(median_growth)),
+                        lower,
+                        upper,
+                        color=color,
+                        alpha=alpha,
+                        label=f'{years}Y 80% Range'
+                    )
+                    
+                    # Plot median line
+                    ax.plot(
+                        median_growth, 
+                        color=color, 
+                        linewidth=2.8,
+                        alpha=0.95,
+                        label=f'{years}Y Median'
+                    )
+                    
+                    # Final value annotation
                     final_value = median_growth.iloc[-1]
-                    
-                    # Format label
                     label = (f"€{final_value/1e6:.2f}M" if final_value >= 1e6 
                             else f"€{final_value/1e3:.0f}K")
                     
-                    # Add annotation
                     ax.annotate(
                         label,
                         xy=(len(median_growth)-1, final_value),
                         xytext=(25, 0),
                         textcoords='offset points',
                         color=color,
-                        fontsize=11,
+                        fontsize=12,
                         weight='bold',
                         ha='left',
                         va='center',
@@ -238,15 +253,33 @@ if st.button("Generate Portfolio"):
                             fc='white',
                             ec=color,
                             lw=1.5,
-                            alpha=0.9
+                            alpha=0.95
                         )
                     )
 
-                ax.set_title("Long-Term Growth Projection (Median Scenario)", fontsize=14)
+                # Simulation details annotation
+                sim_text = (
+                    f"Monte Carlo Parameters:\n"
+                    f"- Simulations: 500 paths per projection\n"
+                    f"- Model: Geometric Brownian Motion\n"
+                    f"- Annual Return (μ): {metrics['annual_return']:.1%}\n"
+                    f"- Annual Volatility (σ): {metrics['annual_volatility']:.1%}"
+                )
+                ax.text(
+                    0.02, 0.98,
+                    sim_text,
+                    transform=ax.transAxes,
+                    ha='left',
+                    va='top',
+                    fontsize=10,
+                    bbox=dict(facecolor='white', alpha=0.8)
+                
+                ax.set_title("Monte Carlo Projections with Confidence Bounds (10th-90th Percentile)", 
+                            fontsize=14, pad=15)
                 ax.set_xlabel("Trading Days", fontsize=12)
                 ax.set_ylabel("Portfolio Value (€)", fontsize=12)
-                ax.grid(True, linestyle='--', alpha=0.3)
-                ax.legend(loc='upper left', frameon=True)
+                ax.grid(True, linestyle='--', alpha=0.25)
+                ax.legend(loc='upper left', frameon=True, facecolor='white')
                 ax.yaxis.set_major_formatter(
                     plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
                 ax.set_xlim(0, 252*10 + 50)
