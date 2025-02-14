@@ -273,6 +273,7 @@ if st.button("Generate Portfolio"):
                     va='top',
                     fontsize=10,
                     bbox=dict(facecolor='white', alpha=0.8)
+                )  # Fixed closing parenthesis here
                 
                 ax.set_title("Monte Carlo Projections with Confidence Bounds (10th-90th Percentile)", 
                             fontsize=14, pad=15)
