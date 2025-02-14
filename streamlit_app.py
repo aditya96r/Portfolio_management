@@ -1,171 +1,251 @@
 import numpy as np
 import pandas as pd
+import yfinance as yf
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
-from matplotlib.ticker import FuncFormatter
+import streamlit as st
+from pypfopt import EfficientFrontier, objective_functions
+from pypfopt import risk_models, expected_returns
 
-# =====================
-# Enhanced MPT Engine with CVaR
-# =====================
+# Configure page
+st.set_page_config(page_title="Professional Portfolio Manager", layout="wide")
+st.title('Advanced Wealth Optimizer')
+st.write("""
+### Institutional-Grade Portfolio Construction with Risk Management
+""")
 
-class AdvancedPortfolioOptimizer:
-    def __init__(self, risk_free_rate=0.015):
-        self.assets = {
-            'Equities': {'return': 0.07, 'volatility': 0.18, 'skew': -0.3},
-            'Bonds': {'return': 0.03, 'volatility': 0.06, 'skew': 0.2},
-            'REITs': {'return': 0.05, 'volatility': 0.12, 'skew': -0.1},
-            'Commodities': {'return': 0.04, 'volatility': 0.15, 'skew': -0.4}
+# Sanitized asset universe with crypto
+ASSET_UNIVERSE = {
+    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOG': 'Tech',
+    'SPY': 'Equity', 'TLT': 'Bonds', 'GLD': 'Commodities',
+    'JPM': 'Financials', 'XOM': 'Energy', 'ARKK': 'Innovation',
+    'BTCUSD': 'Crypto', 'ETHUSD': 'Crypto'  # Hyphens removed
+}
+
+def sanitize_tickers(tickers):
+    """Ensure ticker compatibility"""
+    return [t.replace('-', '') for t in tickers]
+
+def fetch_data():
+    """Robust data fetcher with sanitization"""
+    try:
+        raw_tickers = list(ASSET_UNIVERSE.keys())
+        data = yf.download(
+            sanitize_tickers(raw_tickers),
+            period="3y",
+            interval="1d",
+            group_by='ticker',
+            progress=False
+        )
+        
+        # Process and sanitize column names
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = [f"{col[0]}_{col[1]}" for col in data.columns]
+            close_prices = data.filter(like='_Close')
+            close_prices.columns = [col.split('_')[0] for col in close_prices.columns]
+        else:
+            close_prices = data['Close'].to_frame()
+        
+        # Sanitize and validate
+        close_prices.columns = sanitize_tickers(close_prices.columns)
+        valid_tickers = [t for t in ASSET_UNIVERSE if t in close_prices.columns]
+        return close_prices[valid_tickers].ffill().dropna(axis=1)
+    
+    except Exception as e:
+        st.error(f"Data error: {str(e)}")
+        return pd.DataFrame()
+
+def calculate_risk_profile(answers):
+    """Improved risk scoring thresholds"""
+    score = (
+        (6 - (answers['horizon'] / 1.5)) * 0.4 +  # More aggressive horizon impact
+        {"0-10%": 1, "10-20%": 2, "20-30%": 4, "30%+": 6}[answers['loss_tolerance']] * 0.6 +  # Higher weights
+        {"Novice": 1, "Intermediate": 3, "Expert": 5}[answers['knowledge']] * 0.2 +
+        (answers['age'] < 45) * 3  # Strong age impact
+    )
+    if score < 4.0: return "Conservative"
+    elif score < 7.0: return "Moderate"
+    else: return "Aggressive"
+
+def optimize_portfolio(risk_profile, data):
+    """Error-proof portfolio construction"""
+    if data.empty or len(data.columns) < 3:
+        return {}
+    
+    try:
+        mu = expected_returns.capm_return(data)
+        S = risk_models.CovarianceShrinkage(data).ledoit_wolf()
+        
+        if risk_profile == "Conservative":
+            ef = EfficientFrontier(None, S)
+            ef.add_constraint(lambda w: w <= 0.1)
+            ef.min_volatility()
+            
+        elif risk_profile == "Moderate":
+            momentum = data.pct_change(90).mean()
+            volatility = data.pct_change().std()
+            selected = (momentum / volatility).nlargest(10).index.tolist()
+            
+            # Fresh EF instance for selected assets
+            ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
+            ef.add_objective(objective_functions.L2_reg)
+            ef.max_sharpe()
+            
+        else:  # Aggressive
+            ef = EfficientFrontier(mu, S)
+            ef.add_objective(objective_functions.L2_reg, gamma=0.01)  # Minimal regularization
+            crypto_assets = [t for t in data.columns if ASSET_UNIVERSE.get(t) == 'Crypto']
+            if crypto_assets:
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.45)
+            ef.max_sharpe()
+
+        return ef.clean_weights()
+    
+    except Exception as e:
+        st.error(f"Optimization error: {str(e)}")
+        return {}
+
+def calculate_metrics(weights, data):
+    """Robust metrics calculation"""
+    try:
+        returns = data.pct_change().dropna()
+        valid_assets = [a for a in weights if a in returns.columns]
+        aligned_weights = np.array([weights[a] for a in valid_assets])
+        
+        portfolio_returns = returns[valid_assets].dot(aligned_weights)
+        
+        return {
+            'annual_return': portfolio_returns.mean() * 252,
+            'annual_volatility': portfolio_returns.std() * np.sqrt(252),
+            'sharpe_ratio': portfolio_returns.mean() / portfolio_returns.std() * np.sqrt(252),
+            'max_drawdown': (portfolio_returns.cumsum().expanding().max() - portfolio_returns.cumsum()).max(),
+            'var_95': np.percentile(portfolio_returns, 5) * 100,
+            'cvar_95': portfolio_returns[portfolio_returns <= np.percentile(portfolio_returns, 5)].mean() * 100
         }
-        self.corr_matrix = np.array([
-            [1.00, 0.15, 0.40, 0.55],
-            [0.15, 1.00, 0.10, -0.05],
-            [0.40, 0.10, 1.00, 0.25],
-            [0.55, -0.05, 0.25, 1.00]
-        ])
-        self.rfr = risk_free_rate
+    except Exception as e:
+        st.error(f"Metrics error: {str(e)}")
+        return {}
+
+# Sidebar Configuration
+with st.sidebar:
+    st.header("Investor Profile")
+    with st.expander("Risk Assessment", expanded=True):
+        risk_answers = {
+            'horizon': st.slider("Investment Horizon (Years)", 1, 10, 3),
+            'loss_tolerance': st.select_slider("Max Loss Tolerance", 
+                                             options=["0-10%", "10-20%", "20-30%", "30%+"],
+                                             value="30%+"),
+            'knowledge': st.radio("Market Experience", ["Novice", "Intermediate", "Expert"]),
+            'age': st.number_input("Age", 18, 100, 35)
+        }
+        risk_profile = calculate_risk_profile(risk_answers)
+        st.metric("Your Risk Profile", risk_profile)
+    
+    investment = st.number_input("Investment Amount (€)", 1000, 1000000, 100000)
+
+# Main Application
+if st.button("Generate Portfolio"):
+    with st.spinner("Constructing optimal allocation..."):
+        data = fetch_data()
+        if data.empty: st.stop()
         
-    def calculate_portfolio_metrics(self, weights):
-        ret = sum(w * self.assets[asset]['return'] for w, asset in zip(weights, self.assets))
-        vol = np.sqrt(np.dot(weights.T, np.dot(self.corr_matrix * np.outer(
-            [self.assets[asset]['volatility'] for asset in self.assets], 
-            [self.assets[asset]['volatility'] for asset in self.assets]), 
-            weights)))
-        skew = sum(w * self.assets[asset]['skew'] for w, asset in zip(weights, self.assets))
-        sharpe = (ret - self.rfr) / vol
-        return ret, vol, sharpe, skew
-
-    def optimize_portfolio(self, risk_profile):
-        constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-        bounds = self._get_bounds(risk_profile)
+        weights = optimize_portfolio(risk_profile, data)
+        if not weights: st.stop()
         
-        def objective(weights):
-            _, vol, sharpe, _ = self.calculate_portfolio_metrics(weights)
-            return -sharpe + 0.1*vol  # Risk-adjusted optimization
+        valid_weights = {k: v for k, v in weights.items() if v > 0.01}
+        metrics = calculate_metrics(valid_weights, data)
         
-        result = minimize(objective,
-                         x0=np.ones(len(self.assets))/len(self.assets),
-                         method='SLSQP',
-                         bounds=bounds,
-                         constraints=constraints)
-        return result.x
-
-    def _get_bounds(self, risk_profile):
-        if risk_profile == 'Conservative':
-            return [(0, 0.4), (0.2, 0.5), (0.1, 0.3), (0.05, 0.2)]
-        elif risk_profile == 'Moderate':
-            return [(0.3, 0.6), (0.1, 0.4), (0.05, 0.25), (0.05, 0.3)]
-        return [(0.5, 0.8), (0, 0.3), (0, 0.2), (0, 0.2)]
-
-# =====================
-# Advanced GBM Simulation with Jump Diffusion
-# =====================
-
-def advanced_gbm_simulation(initial, weights, years, trading_days=250):
-    optimizer = AdvancedPortfolioOptimizer()
-    ret, vol, _, skew = optimizer.calculate_portfolio_metrics(weights)
-    
-    dt = 1/trading_days
-    n_steps = years * trading_days
-    shocks = np.random.normal(size=n_steps)
-    jumps = np.random.poisson(0.05 * dt, n_steps) * np.random.normal(-0.1, 0.15, n_steps)
-    
-    # Adjusted drift with volatility drag and skewness adjustment
-    drift = (ret - 0.5*vol**2 + skew/100) * dt
-    diffusion = vol * np.sqrt(dt) * shocks
-    compound_returns = drift + diffusion + jumps
-    
-    return initial * np.exp(np.cumsum(compound_returns))
-
-# =====================
-# Intelligent Annotation System
-# =====================
-
-class AnnotationManager:
-    def __init__(self, ax):
-        self.ax = ax
-        self.annotations = []
+        # Portfolio Composition
+        with st.expander("Asset Allocation", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                fig, ax = plt.subplots()
+                ax.pie(valid_weights.values(), labels=valid_weights.keys(), autopct='%1.1f%%')
+                ax.set_title("Individual Holdings")
+                st.pyplot(fig)
+            with col2:
+                sector_alloc = pd.Series(valid_weights).groupby(ASSET_UNIVERSE.get).sum()
+                fig, ax = plt.subplots()
+                ax.pie(sector_alloc, labels=sector_alloc.index, autopct='%1.1f%%')
+                ax.set_title("Sector Allocation")
+                st.pyplot(fig)
         
-    def add_annotation(self, x, y, text):
-        annotation = self.ax.annotate(text, (x, y), xytext=(20, 10),
-                                     textcoords='offset points',
-                                     ha='left', va='bottom',
-                                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="0.5", lw=1),
-                                     arrowprops=dict(arrowstyle="->", connectionstyle="arc3"))
-        self._avoid_overlap(annotation)
-        self.annotations.append(annotation)
+        # Risk Metrics
+        with st.expander("Risk Analysis", expanded=False):
+            col3, col4 = st.columns(2)
+            with col3:
+                st.metric("Expected Annual Return", f"{metrics.get('annual_return', 0):.1%}")
+                st.metric("Annual Volatility", f"{metrics.get('annual_volatility', 0):.1%}")
+                st.metric("Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.2f}")
+            with col4:
+                st.metric("Value at Risk (95%)", f"{metrics.get('var_95', 0):.1f}%")
+                st.metric("Conditional VaR", f"{metrics.get('cvar_95', 0):.1f}%")
+                st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1%}")
         
-    def _avoid_overlap(self, new_ann):
-        if not self.annotations:
-            return
-        fig = self.ax.figure
-        fig.canvas.draw()
-        new_bbox = new_ann.get_window_extent()
-        for existing in self.annotations:
-            existing_bbox = existing.get_window_extent()
-            if new_bbox.intersects(existing_bbox):
-                new_ann.xyann = (new_ann.xyann[0], new_ann.xyann[1] - 25)
+        # Growth Projection with Annotations
+        if investment > 0 and metrics.get('annual_return'):
+            with st.expander(f"Growth Projection - €{investment:,.0f}", expanded=False):
+                fig, ax = plt.subplots(figsize=(10, 6))
+                periods = [3, 5, 7, 10]
+                colors = ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728']  # More distinct colors
+                
+                for years, color in zip(periods, colors):
+                    simulations = 300
+                    daily_returns = np.random.normal(
+                        metrics['annual_return']/252,
+                        metrics['annual_volatility']/np.sqrt(252),
+                        (252*years, simulations)
+                    )
+                    growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
+                    median_growth = pd.DataFrame(growth).median(axis=1)
+                    
+                    # Plot growth line
+                    ax.plot(median_growth, 
+                           color=color, 
+                           linewidth=2.5,
+                           alpha=0.9,
+                           label=f'{years} Years')
+                    
+                    # Calculate final value
+                    final_value = median_growth.iloc[-1]
+                    
+                    # Format label based on value size
+                    if final_value >= 1e6:
+                        label = f"€{final_value/1e6:.2f}M"
+                    else:
+                        label = f"€{final_value/1e3:.0f}K"
+                    
+                    # Add annotation with smart positioning
+                    ax.annotate(
+                        label,
+                        xy=(len(median_growth)-1, final_value),
+                        xytext=(25, 0),  # Horizontal offset
+                        textcoords='offset points',
+                        color=color,
+                        fontsize=11,
+                        weight='bold',
+                        ha='left',
+                        va='center',
+                        bbox=dict(
+                            boxstyle='round,pad=0.3',
+                            fc='white',
+                            ec=color,
+                            lw=1.5,
+                            alpha=0.9
+                        )
+                    )
 
-# =====================
-# Dynamic Visualization Engine
-# =====================
-
-def create_projection_plot(initial=2e5):
-    fig, ax = plt.subplots(figsize=(16, 9))
-    optimizer = AdvancedPortfolioOptimizer()
-    ann_manager = AnnotationManager(ax)
-    
-    risk_profiles = {
-        'Conservative': {'color': '#2ecc71', 'linestyle': '--'},
-        'Moderate': {'color': '#3498db', 'linestyle': '-'},
-        'Aggressive': {'color': '#e74c3c', 'linestyle': '-.'}
-    }
-    
-    for profile, style in risk_profiles.items():
-        weights = optimizer.optimize_portfolio(profile)
-        ret, vol, sharpe, skew = optimizer.calculate_portfolio_metrics(weights)
-        
-        for years in [3, 5, 7, 10]:
-            days = years * 250
-            growth = advanced_gbm_simulation(initial, weights, years)
-            
-            ax.plot(np.linspace(0, days, days), growth, 
-                   color=style['color'],
-                   linestyle=style['linestyle'],
-                   alpha=0.8,
-                   lw=2)
-            
-            # Add smart annotation
-            final_value = growth[-1]
-            ann_manager.add_annotation(days, final_value,
-                                      f"€{final_value/1e6:.2f}M\n"
-                                      f"Sharpe: {sharpe:.2f}\n"
-                                      f"Vol: {vol*100:.1f}%")
-
-    # Dynamic formatting
-    ax.set_title("Advanced Portfolio Projection System\nRisk-Adjusted Growth Scenarios", pad=25)
-    ax.set_xlabel("Trading Days", labelpad=15)
-    ax.set_ylabel("Portfolio Value (€)", labelpad=15)
-    ax.grid(True, alpha=0.2)
-    ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{int(x//250)}Y'))
-    ax.yaxis.set_major_formatter(FuncFormatter(
-        lambda x, _: f'€{x/1e3:.0f}K' if x < 1e6 else f'€{x/1e6:.2f}M'))
-    
-    # Adaptive scaling
-    y_max = ax.get_ylim()[1]
-    ax.set_yscale('log' if y_max/initial > 100 else 'linear')
-    
-    # Risk legend
-    risk_text = "\n".join([
-        f"{profile}: "
-        f"Max Vol {optimizer._get_bounds(profile)[0][1]*100:.0f}%"
-        for profile in risk_profiles])
-    ax.text(0.98, 0.02, risk_text,
-           transform=ax.transAxes,
-           ha='right', va='bottom',
-           bbox=dict(facecolor='white', alpha=0.9))
-
-    plt.tight_layout()
-    plt.show()
-
-# Execute the visualization
-create_projection_plot(initial=200000)
+                # Chart formatting
+                ax.set_title("Long-Term Growth Projection (Median Scenario)", fontsize=14, pad=15)
+                ax.set_xlabel("Trading Days", fontsize=12)
+                ax.set_ylabel("Portfolio Value (€)", fontsize=12)
+                ax.grid(True, linestyle='--', alpha=0.4)
+                ax.legend(loc='upper left', frameon=True, facecolor='white')
+                
+                # Set axis formatters
+                ax.yaxis.set_major_formatter(
+                    plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
+                
+                # Set axis limits
+                ax.set_xlim(0, 252*10 + 50)
+                plt.tight_layout()
+                st.pyplot(fig)
