@@ -53,20 +53,32 @@ def fetch_data():
         return pd.DataFrame()
 
 def calculate_risk_profile(answers):
-    """Reliable risk profile calculation"""
-    score = (
-        (11 - answers['horizon']) * 0.4 +  # Longer horizon -> more conservative
-        {"0-10%": 1, "10-20%": 3, "20-30%": 5, "30%+": 7}[answers['loss_tolerance']] * 0.5 +
-        {"Novice": 1, "Intermediate": 3, "Expert": 5}[answers['knowledge']] * 0.2 +
-        (answers['age'] >= 45) * 2  # Age penalty for conservative
-    )
-    
-    if score < 7: return "Conservative"
-    elif score < 12: return "Moderate"
-    else: return "Aggressive"
+    """Corrected risk scoring with accurate thresholds"""
+    horizon_score = (answers['horizon'] / 1.5) * 0.4  # Longer horizon increases score
+    loss_score = {
+        "0-10%": 1, 
+        "10-20%": 3, 
+        "20-30%": 5, 
+        "30%+": 7
+    }[answers['loss_tolerance']] * 0.6
+    knowledge_score = {
+        "Novice": 1, 
+        "Intermediate": 3, 
+        "Expert": 5
+    }[answers['knowledge']] * 0.3
+    age_score = 3 if answers['age'] < 45 else 0
+
+    total_score = horizon_score + loss_score + knowledge_score + age_score
+
+    if total_score < 5.0: 
+        return "Conservative"
+    elif 5.0 <= total_score < 8.0: 
+        return "Moderate"
+    else: 
+        return "Aggressive"
 
 def optimize_portfolio(risk_profile, data):
-    """Portfolio construction with clear conservative allocation"""
+    """Portfolio optimization with risk constraints"""
     if data.empty or len(data.columns) < 3:
         return {}
     
@@ -76,21 +88,24 @@ def optimize_portfolio(risk_profile, data):
         
         if risk_profile == "Conservative":
             ef = EfficientFrontier(None, S)
-            ef.add_constraint(lambda w: w <= 0.08)  # Tighter allocation limits
-            ef.add_constraint(lambda w: sum(w) == 1)
+            ef.add_constraint(lambda w: w <= 0.15)  # More diversified
             ef.min_volatility()
             
         elif risk_profile == "Moderate":
-            ef = EfficientFrontier(mu, S)
-            ef.add_constraint(lambda w: w <= 0.15)
+            momentum = data.pct_change(90).mean()
+            volatility = data.pct_change().std()
+            selected = (momentum / volatility).nlargest(8).index.tolist()
+            
+            ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
             ef.add_objective(objective_functions.L2_reg)
             ef.max_sharpe()
             
         else:  # Aggressive
             ef = EfficientFrontier(mu, S)
+            ef.add_objective(objective_functions.L2_reg, gamma=0.005)
             crypto_assets = [t for t in data.columns if ASSET_UNIVERSE.get(t) == 'Crypto']
             if crypto_assets:
-                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.3)
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.35)
             ef.max_sharpe()
 
         return ef.clean_weights()
@@ -100,7 +115,7 @@ def optimize_portfolio(risk_profile, data):
         return {}
 
 def calculate_metrics(weights, data):
-    """Robust metrics calculation"""
+    """Metrics calculation with error handling"""
     try:
         returns = data.pct_change().dropna()
         valid_assets = [a for a in weights if a in returns.columns]
@@ -128,14 +143,14 @@ with st.sidebar:
             'horizon': st.slider("Investment Horizon (Years)", 1, 10, 5),
             'loss_tolerance': st.select_slider("Max Loss Tolerance", 
                                              options=["0-10%", "10-20%", "20-30%", "30%+"],
-                                             value="10-20%"),
+                                             value="20-30%"),
             'knowledge': st.radio("Market Experience", ["Novice", "Intermediate", "Expert"]),
-            'age': st.number_input("Age", 18, 100, 45)
+            'age': st.number_input("Age", 18, 100, 40)
         }
         risk_profile = calculate_risk_profile(risk_answers)
         st.metric("Your Risk Profile", risk_profile)
     
-    investment = st.number_input("Investment Amount (€)", 1000, 1000000, 100000)
+    investment = st.number_input("Investment Amount (€)", 1000, 1000000, 200000)
 
 # Main Application
 if st.button("Generate Portfolio"):
@@ -176,7 +191,7 @@ if st.button("Generate Portfolio"):
                 st.metric("Conditional VaR", f"{metrics.get('cvar_95', 0):.1f}%")
                 st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1%}")
         
-        # Growth Projection
+        # Growth Projection with Annotations
         if investment > 0 and metrics.get('annual_return'):
             with st.expander(f"Growth Projection - €{investment:,.0f}", expanded=False):
                 fig, ax = plt.subplots(figsize=(10, 6))
@@ -193,14 +208,21 @@ if st.button("Generate Portfolio"):
                     growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
                     median_growth = pd.DataFrame(growth).median(axis=1)
                     
+                    # Plot growth line
                     ax.plot(median_growth, 
                            color=color, 
                            linewidth=2.5,
+                           alpha=0.9,
                            label=f'{years} Years')
                     
+                    # Calculate final value
                     final_value = median_growth.iloc[-1]
-                    label = f"€{final_value/1e6:.2f}M" if final_value >= 1e6 else f"€{final_value/1e3:.0f}K"
                     
+                    # Format label
+                    label = (f"€{final_value/1e6:.2f}M" if final_value >= 1e6 
+                            else f"€{final_value/1e3:.0f}K")
+                    
+                    # Add annotation
                     ax.annotate(
                         label,
                         xy=(len(median_growth)-1, final_value),
@@ -224,8 +246,9 @@ if st.button("Generate Portfolio"):
                 ax.set_xlabel("Trading Days", fontsize=12)
                 ax.set_ylabel("Portfolio Value (€)", fontsize=12)
                 ax.grid(True, linestyle='--', alpha=0.3)
-                ax.legend(loc='upper left')
+                ax.legend(loc='upper left', frameon=True)
                 ax.yaxis.set_major_formatter(
                     plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
                 ax.set_xlim(0, 252*10 + 50)
+                
                 st.pyplot(fig)
