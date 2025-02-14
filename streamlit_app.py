@@ -1,6 +1,10 @@
 import matplotlib.pyplot as plt
 import streamlit as st
 
+st.title('Portfolio Mangement App')
+
+st.info.('This App shows your portfolio) 
+
 with st.sidebar:
     st.header('Investment Risk Tolerance Assessment')
     Downturn = st.selectbox('Downturn', ('','Sell immediately','Hold and wait','Buy more because prices are cheaper'))
