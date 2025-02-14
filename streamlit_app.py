@@ -13,12 +13,10 @@ st.write("""
 ### Multi-Strategy Allocation with Risk Management
 """)
 
-# Asset universe with sector classification
 ASSET_UNIVERSE = {
     'AAPL': 'Technology', 'MSFT': 'Technology', 'GOOG': 'Technology',
     'SPY': 'US Equity', 'TLT': 'Treasuries', 'GLD': 'Commodities',
-    'JPM': 'Financials', 'XOM': 'Energy', 'BTC-USD': 'Crypto',
-    'VBK': 'Small Cap', 'VWO': 'Emerging Markets'
+    'JPM': 'Financials', 'XOM': 'Energy', 'VBK': 'Small Cap', 'VWO': 'Emerging Markets'
 }
 
 def fetch_data():
@@ -39,91 +37,75 @@ def fetch_data():
         return pd.DataFrame()
 
 def calculate_risk_profile(answers):
-    """Advanced risk scoring system"""
+    """Improved risk scoring system"""
     score = (
-        answers['horizon'] * 0.4 +
-        answers['loss_tolerance'] * 0.3 +
-        answers['knowledge'] * 0.2 +
-        answers['age'] * 0.1
+        (5 - (answers['horizon'] / 2)) * 0.4 +  # Horizon impact reduced
+        {"0-10%": 1, "10-20%": 2, "20-30%": 3, "30%+": 4}[answers['loss_tolerance']] * 0.4 +
+        {"Novice": 1, "Intermediate": 2, "Expert": 3}[answers['knowledge']] * 0.2 +
+        (answers['age'] / 40)  # Age impact reduced
     )
-    return "Conservative" if score < 2.5 else "Moderate" if score < 4.0 else "Aggressive"
+    if score < 3.0: return "Conservative"
+    elif score < 4.5: return "Moderate"
+    else: return "Aggressive"
 
 def optimize_portfolio(risk_profile, data):
-    """Multi-strategy portfolio construction"""
-    if data.empty: return {}
+    """Robust portfolio construction"""
+    if data.empty or len(data.columns) < 3:
+        return {}
     
     try:
         mu = expected_returns.capm_return(data)
         S = risk_models.CovarianceShrinkage(data).ledoit_wolf()
-        
+        ef = EfficientFrontier(mu, S)
+
         if risk_profile == "Conservative":
-            ef = EfficientFrontier(None, S)
-            ef.add_constraint(lambda w: w <= 0.1)
             ef.min_volatility()
-            
+            ef.add_constraint(lambda w: w <= 0.15)
         elif risk_profile == "Moderate":
-            momentum = data.pct_change(90).mean()
-            volatility = data.pct_change().std()
-            factor_score = (momentum / volatility).rank(pct=True)
-            selected = factor_score.nlargest(10).index
+            selected = data.columns[(data.pct_change(90).mean() / data.pct_change().std()).nlargest(8).index]
             ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
-            ef.add_objective(objective_functions.L2_reg)
             ef.max_sharpe()
-            
         else:
-            market_prior = expected_returns.mean_historical_return(data)
-            ef = EfficientFrontier(market_prior, S)
-            ef.add_constraint(lambda w: w >= 0.05)
+            ef.add_objective(objective_functions.L2_reg, gamma=0.1)
             ef.max_sharpe()
 
         return ef.clean_weights()
-    
     except Exception as e:
         st.error(f"Optimization error: {str(e)}")
         return {}
 
 def calculate_metrics(weights, data):
-    """Comprehensive portfolio metrics"""
-    returns = data.pct_change().dropna()
-    portfolio_returns = returns.dot(list(weights.values()))
-    
-    return {
-        'annual_return': portfolio_returns.mean() * 252,
-        'annual_volatility': portfolio_returns.std() * np.sqrt(252),
-        'sharpe_ratio': portfolio_returns.mean() / portfolio_returns.std() * np.sqrt(252),
-        'max_drawdown': (portfolio_returns.cumsum().expanding().max() - 
-                        portfolio_returns.cumsum()).max(),
-        'beta': np.cov(portfolio_returns, returns['SPY'])[0,1] / np.var(returns['SPY']),
-        'var_95': np.percentile(portfolio_returns, 5) * 100,
-        'cvar_95': portfolio_returns[portfolio_returns <= np.percentile(portfolio_returns, 5)].mean() * 100
-    }
+    """Error-resistant metrics calculation"""
+    try:
+        returns = data.pct_change().dropna()
+        aligned_weights = pd.Series(weights).reindex(returns.columns, fill_value=0)
+        portfolio_returns = returns.dot(aligned_weights)
+        
+        return {
+            'annual_return': portfolio_returns.mean() * 252,
+            'annual_volatility': portfolio_returns.std() * np.sqrt(252),
+            'sharpe_ratio': portfolio_returns.mean() / portfolio_returns.std() * np.sqrt(252),
+            'max_drawdown': (portfolio_returns.cumsum().expanding().max() - portfolio_returns.cumsum()).max(),
+            'var_95': np.percentile(portfolio_returns, 5) * 100,
+            'cvar_95': portfolio_returns[portfolio_returns <= np.percentile(portfolio_returns, 5)].mean() * 100
+        }
+    except Exception as e:
+        st.error(f"Metrics error: {str(e)}")
+        return {}
 
 # Sidebar Configuration
 with st.sidebar:
     st.header("Investor Profile")
-    
-    # Risk Profiling
     with st.expander("Risk Questionnaire", expanded=True):
         risk_answers = {
             'horizon': st.slider("Investment Horizon (Years)", 1, 10, 5),
-            'loss_tolerance': st.select_slider("Max Tolerable Loss",
-                                             options=["0-10%", "10-20%", "20-30%", "30%+"],
-                                             value="10-20%"),
+            'loss_tolerance': st.select_slider("Max Tolerable Loss", ["0-10%", "10-20%", "20-30%", "30%+"], "10-20%"),
             'knowledge': st.radio("Market Knowledge", ["Novice", "Intermediate", "Expert"]),
             'age': st.number_input("Age", 18, 100, 30)
         }
-        
-        answer_scores = {
-            'horizon': 5 - (risk_answers['horizon'] / 2),
-            'loss_tolerance': {"0-10%": 1, "10-20%": 2, "20-30%": 3, "30%+": 4}[risk_answers['loss_tolerance']],
-            'knowledge': {"Novice": 1, "Intermediate": 2, "Expert": 3}[risk_answers['knowledge']],
-            'age': risk_answers['age'] / 25
-        }
-        
-        risk_profile = calculate_risk_profile(answer_scores)
-        st.metric("Risk Profile", risk_profile)
+        risk_profile = calculate_risk_profile(risk_answers)
+        st.metric("Your Risk Profile", risk_profile)
     
-    # Investment Input
     investment = st.number_input("Investment Amount (€)", 1000, 1000000, 100000)
 
 # Main Application
@@ -135,61 +117,59 @@ if st.button("Construct Portfolio"):
         weights = optimize_portfolio(risk_profile, data)
         if not weights: st.stop()
         
-        metrics = calculate_metrics(weights, data)
         valid_weights = {k: v for k, v in weights.items() if v > 0.01}
+        metrics = calculate_metrics(valid_weights, data)
         
         # Portfolio Composition
         with st.expander("Asset Allocation & Sector Breakdown", expanded=True):
             col1, col2 = st.columns(2)
-            
             with col1:
-                fig1, ax1 = plt.subplots()
-                ax1.pie(valid_weights.values(), labels=valid_weights.keys(), autopct='%1.1f%%')
-                ax1.set_title("Individual Asset Allocation")
-                st.pyplot(fig1)
-            
+                fig, ax = plt.subplots()
+                ax.pie(valid_weights.values(), labels=valid_weights.keys(), autopct='%1.1f%%')
+                ax.set_title("Asset Allocation")
+                st.pyplot(fig)
             with col2:
                 sector_alloc = pd.Series(valid_weights).groupby(ASSET_UNIVERSE.get).sum()
-                fig2, ax2 = plt.subplots()
-                ax2.pie(sector_alloc, labels=sector_alloc.index, autopct='%1.1f%%')
-                ax2.set_title("Sector Allocation Breakdown")
-                st.pyplot(fig2)
+                fig, ax = plt.subplots()
+                ax.pie(sector_alloc, labels=sector_alloc.index, autopct='%1.1f%%')
+                ax.set_title("Sector Allocation")
+                st.pyplot(fig)
         
         # Risk Metrics
         with st.expander("Advanced Risk Metrics", expanded=False):
             col3, col4 = st.columns(2)
-            
             with col3:
-                st.metric("Value at Risk (95%)", f"{metrics['var_95']:.1f}%")
-                st.metric("Conditional VaR", f"{metrics['cvar_95']:.1f}%")
-                st.metric("Max Drawdown", f"{metrics['max_drawdown']:.1%}")
-            
+                st.metric("Value at Risk (95%)", f"{metrics.get('var_95', 0):.1f}%")
+                st.metric("Conditional VaR", f"{metrics.get('cvar_95', 0):.1f}%")
             with col4:
-                st.metric("Annual Volatility", f"{metrics['annual_volatility']:.1%}")
-                st.metric("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}")
-                st.metric("Beta vs S&P 500", f"{metrics['beta']:.2f}")
+                st.metric("Annual Volatility", f"{metrics.get('annual_volatility', 0):.1%}")
+                st.metric("Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.2f}")
         
         # Growth Projection
-        if investment > 0:
+        if investment > 0 and metrics.get('annual_return'):
             with st.expander(f"€{investment:,.0f} Growth Projection", expanded=False):
-                returns = data.pct_change().dropna().dot(list(valid_weights.values()))
-                simulations = 100
-                days = 252 * 5
+                years = st.selectbox("Projection Period", [5, 10], index=0)
+                simulations = 500
+                daily_returns = np.random.normal(
+                    metrics['annual_return']/252,
+                    metrics['annual_volatility']/np.sqrt(252),
+                    (252*years, simulations)
+                )
+                growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
                 
-                growth = investment * np.exp(np.cumsum(
-                    np.random.normal(
-                        returns.mean()/252, 
-                        returns.std()/np.sqrt(252), 
-                        (days, simulations)
-                    ), 
-                    axis=0
-                ))
-                
-                fig3, ax3 = plt.subplots(figsize=(10, 6))
-                ax3.plot(growth, alpha=0.1, color='grey')
-                ax3.plot(pd.DataFrame(growth).quantile(0.5, axis=1), color='blue', label='Median')
-                ax3.set_xlabel("Trading Days")
-                ax3.set_ylabel("Portfolio Value (€)")
-                ax3.legend()
-                st.pyplot(fig3)
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.plot(growth, alpha=0.1, color='grey')
+                ax.plot(pd.DataFrame(growth).median(axis=1), color='blue', label='Median')
+                ax.set_title(f"{years}-Year Growth Projection")
+                ax.legend()
+                st.pyplot(fig)
 
+# requirements.txt
+"""
+numpy==1.26.4
+pandas==2.2.2
+yfinance==0.2.52
+matplotlib==3.8.3
+streamlit==1.35.0
+pypfopt==1.5.5
+"""
