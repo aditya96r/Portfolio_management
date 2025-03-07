@@ -294,3 +294,17 @@ if st.button("Generate Portfolio"):
                     plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
                 
                 st.pyplot(fig)
+
+# Add a text input for conversational queries
+user_query = st.text_input("Ask me anything about your portfolio:")
+
+if user_query:
+    # Generate a response using OpenAI
+    response = generate_response(user_query)
+    st.write("**Response:**")
+    st.write(response)
+
+    # Check if the user requested a graph
+    if "graph" in user_query.lower() or "plot" in user_query.lower():
+        fig = plot_historical_returns(data)
+        st.pyplot(fig)
