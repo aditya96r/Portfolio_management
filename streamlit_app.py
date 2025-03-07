@@ -7,15 +7,15 @@ import streamlit as st
 from pypfopt import EfficientFrontier, objective_functions, risk_models, expected_returns
 import openai
 
-# Set OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY", "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")
+# Set OpenAI API key (replace with your key)
+openai.api_key = os.getenv("OPENAI_API_KEY", "your-api-key-here")
 
 # Configure Streamlit page
 st.set_page_config(page_title="Professional Portfolio Manager", layout="wide")
 st.title('Advanced Wealth Optimizer')
 st.write("### Institutional-Grade Portfolio Construction with Risk Management")
 
-# Asset universe with valid crypto symbols
+# Asset universe with valid symbols
 ASSET_UNIVERSE = {
     'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOG': 'Tech',
     'SPY': 'Equity', 'TLT': 'Bonds', 'GLD': 'Commodities',
@@ -140,103 +140,105 @@ with st.sidebar:
     investment = st.number_input("Investment Amount (€)", 1000, 1000000, 200000)
 
 # Main app logic
+portfolio_generated = False
+data, metrics, valid_weights = None, None, None
+
 if st.button("Generate Portfolio"):
     with st.spinner("Constructing optimal allocation..."):
         data = fetch_data()
-        if data.empty: 
-            st.stop()
-        weights = optimize_portfolio(risk_profile, data)
-        if not weights: 
-            st.stop()
-        valid_weights = {k: v for k, v in weights.items() if v > 0.01}
-        metrics = calculate_metrics(valid_weights, data)
+        if not data.empty:
+            weights = optimize_portfolio(risk_profile, data)
+            if weights:
+                valid_weights = {k: v for k, v in weights.items() if v > 0.01}
+                metrics = calculate_metrics(valid_weights, data)
+                portfolio_generated = True
 
-        # Portfolio Composition
-        with st.expander("Asset Allocation", expanded=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                fig, ax = plt.subplots()
-                ax.pie(valid_weights.values(), labels=valid_weights.keys(), autopct='%1.1f%%')
-                ax.set_title("Individual Holdings")
-                st.pyplot(fig)
-            with col2:
-                sector_alloc = pd.Series(valid_weights).groupby(ASSET_UNIVERSE.get).sum()
-                fig, ax = plt.subplots()
-                ax.pie(sector_alloc, labels=sector_alloc.index, autopct='%1.1f%%')
-                ax.set_title("Sector Allocation")
-                st.pyplot(fig)
+if portfolio_generated:
+    # Portfolio Composition
+    with st.expander("Asset Allocation", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            fig, ax = plt.subplots()
+            ax.pie(valid_weights.values(), labels=valid_weights.keys(), autopct='%1.1f%%')
+            ax.set_title("Individual Holdings")
+            st.pyplot(fig)
+        with col2:
+            sector_alloc = pd.Series(valid_weights).groupby(ASSET_UNIVERSE.get).sum()
+            fig, ax = plt.subplots()
+            ax.pie(sector_alloc, labels=sector_alloc.index, autopct='%1.1f%%')
+            ax.set_title("Sector Allocation")
+            st.pyplot(fig)
 
-        # Risk Metrics
-        with st.expander("Risk Analysis", expanded=False):
-            col3, col4 = st.columns(2)
-            with col3:
-                st.metric("Expected Annual Return", f"{metrics.get('annual_return', 0):.1%}")
-                st.metric("Annual Volatility", f"{metrics.get('annual_volatility', 0):.1%}")
-                st.metric("Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.2f}")
-            with col4:
-                st.metric("Value at Risk (95%)", f"{metrics.get('var_95', 0):.1f}%")
-                st.metric("Conditional VaR", f"{metrics.get('cvar_95', 0):.1f}%")
-                st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1%}")
+    # Risk Metrics
+    with st.expander("Risk Analysis", expanded=False):
+        col3, col4 = st.columns(2)
+        with col3:
+            st.metric("Expected Annual Return", f"{metrics.get('annual_return', 0):.1%}")
+            st.metric("Annual Volatility", f"{metrics.get('annual_volatility', 0):.1%}")
+            st.metric("Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.2f}")
+        with col4:
+            st.metric("Value at Risk (95%)", f"{metrics.get('var_95', 0):.1f}%")
+            st.metric("Conditional VaR", f"{metrics.get('cvar_95', 0):.1f}%")
+            st.metric("Max Drawdown", f"{metrics.get('max_drawdown', 0):.1%}")
 
-        # Monte Carlo Projections
-        if investment > 0 and metrics.get('annual_return'):
-            with st.expander(f"Monte Carlo Projections - €{investment:,.0f}", expanded=False):
-                fig, ax = plt.subplots(figsize=(12, 7))
-                for years, color, alpha in zip([3, 5, 7, 10], ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728'], [0.15, 0.12, 0.09, 0.06]):
-                    simulations = 500
-                    daily_returns = np.random.normal(
-                        metrics['annual_return']/252,
-                        metrics['annual_volatility']/np.sqrt(252),
-                        (252*years, simulations)
-                    )
-                    growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
-                    growth_df = pd.DataFrame(growth)
-                    upper, lower = growth_df.quantile(0.9, axis=1), growth_df.quantile(0.1, axis=1)
-                    median_growth = growth_df.median(axis=1)
-                    
-                    ax.fill_between(range(len(median_growth)), lower, upper, color=color, alpha=alpha, label=f'{years}Y 80% Range')
-                    ax.plot(median_growth, color=color, linewidth=2.8, alpha=0.95, label=f'{years}Y Median')
-                    
-                    vertical_offset = 40 if years in [3,7] else -40
-                    ax.annotate(
-                        f"€{median_growth.iloc[-1]/1e6:.2f}M" if median_growth.iloc[-1] >= 1e6 else f"€{median_growth.iloc[-1]/1e3:.0f}K",
-                        xy=(len(median_growth)-1, median_growth.iloc[-1]),
-                        xytext=(35, vertical_offset),
-                        textcoords='offset points',
+    # Monte Carlo Projections
+    if investment > 0 and metrics.get('annual_return'):
+        with st.expander(f"Monte Carlo Projections - €{investment:,.0f}", expanded=False):
+            fig, ax = plt.subplots(figsize=(12, 7))
+            for years, color, alpha in zip([3, 5, 7, 10], ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728'], [0.15, 0.12, 0.09, 0.06]):
+                simulations = 500
+                daily_returns = np.random.normal(
+                    metrics['annual_return']/252,
+                    metrics['annual_volatility']/np.sqrt(252),
+                    (252*years, simulations)
+                )
+                growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
+                growth_df = pd.DataFrame(growth)
+                upper, lower = growth_df.quantile(0.9, axis=1), growth_df.quantile(0.1, axis=1)
+                median_growth = growth_df.median(axis=1)
+                
+                ax.fill_between(range(len(median_growth)), lower, upper, color=color, alpha=alpha, label=f'{years}Y 80% Range')
+                ax.plot(median_growth, color=color, linewidth=2.8, alpha=0.95, label=f'{years}Y Median')
+                
+                vertical_offset = 40 if years in [3,7] else -40
+                ax.annotate(
+                    f"€{median_growth.iloc[-1]/1e6:.2f}M" if median_growth.iloc[-1] >= 1e6 else f"€{median_growth.iloc[-1]/1e3:.0f}K",
+                    xy=(len(median_growth)-1, median_growth.iloc[-1]),
+                    xytext=(35, vertical_offset),
+                    textcoords='offset points',
+                    color=color,
+                    fontsize=10,
+                    weight='bold',
+                    ha='left',
+                    va='center',
+                    arrowprops=dict(
+                        arrowstyle="-|>",
                         color=color,
-                        fontsize=10,
-                        weight='bold',
-                        ha='left',
-                        va='center',
-                        arrowprops=dict(
-                            arrowstyle="-|>",
-                            color=color,
-                            lw=1,
-                            alpha=0.6
-                        ),
-                        bbox=dict(
-                            boxstyle='round,pad=0.2',
-                            fc='white',
-                            ec=color,
-                            lw=1,
-                            alpha=0.9
-                        )
+                        lw=1,
+                        alpha=0.6
+                    ),
+                    bbox=dict(
+                        boxstyle='round,pad=0.2',
+                        fc='white',
+                        ec=color,
+                        lw=1,
+                        alpha=0.9
                     )
+                )
 
-                ax.set_ylim(bottom=0, top=investment*10)
-                ax.set_xlim(0, 252*10 + 100)
-                ax.set_title("Monte Carlo Projections with Confidence Bounds", fontsize=14, pad=25)
-                ax.set_xlabel("Trading Days", fontsize=12)
-                ax.set_ylabel("Portfolio Value (€)", fontsize=12)
-                ax.grid(True, linestyle='--', alpha=0.2)
-                ax.legend(loc='upper left', frameon=True, facecolor='white')
-                ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
-                st.pyplot(fig)
+            ax.set_ylim(bottom=0, top=investment*10)
+            ax.set_xlim(0, 252*10 + 100)
+            ax.set_title("Monte Carlo Projections with Confidence Bounds", fontsize=14, pad=25)
+            ax.set_xlabel("Trading Days", fontsize=12)
+            ax.set_ylabel("Portfolio Value (€)", fontsize=12)
+            ax.grid(True, linestyle='--', alpha=0.2)
+            ax.legend(loc='upper left', frameon=True, facecolor='white')
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
+            st.pyplot(fig)
 
-# Conversational interface
-user_query = st.text_input("Ask me anything about your portfolio:")
-if user_query:
-    if 'data' in locals() and 'metrics' in locals() and 'valid_weights' in locals():
+    # Conversational interface
+    user_query = st.text_input("Ask me anything about your portfolio:")
+    if user_query:
         response = generate_response(user_query, data, metrics, valid_weights)
         st.write("**Response:**")
         st.write(response)
@@ -251,5 +253,3 @@ if user_query:
             ax.legend()
             ax.grid(True, linestyle='--', alpha=0.2)
             st.pyplot(fig)
-    else:
-        st.warning("Please generate a portfolio first before asking questions!")
