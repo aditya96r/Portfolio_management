@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from pypfopt import EfficientFrontier, objective_functions, risk_models, expected_returns
 import openai
-
+ 
 # Set OpenAI API key (replace with your key)
 openai.api_key = os.getenv("OPENAI_API_KEY", "your-api-key-here")
 
