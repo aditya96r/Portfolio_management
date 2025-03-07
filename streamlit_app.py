@@ -15,15 +15,27 @@ st.set_page_config(page_title="Professional Portfolio Manager", layout="wide")
 st.title('Advanced Wealth Optimizer')
 st.write("### Institutional-Grade Portfolio Construction with Risk Management")
 
-# Asset universe
-ASSET_UNIVERSE = {'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOG': 'Tech', 'SPY': 'Equity', 'TLT': 'Bonds', 'GLD': 'Commodities', 'JPM': 'Financials', 'XOM': 'Energy', 'ARKK': 'Innovation', 'BTCUSD': 'Crypto', 'ETHUSD': 'Crypto'}
+# Asset universe with valid crypto symbols
+ASSET_UNIVERSE = {
+    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOG': 'Tech',
+    'SPY': 'Equity', 'TLT': 'Bonds', 'GLD': 'Commodities',
+    'JPM': 'Financials', 'XOM': 'Energy', 'ARKK': 'Innovation',
+    'BTC-USD': 'Crypto', 'ETH-USD': 'Crypto'  # Corrected symbols
+}
 
-# Helper functions
-def sanitize_tickers(tickers): return [t.replace('-', '') for t in tickers]
+def sanitize_tickers(tickers):
+    return [t.replace('-', '') for t in tickers]
 
 def fetch_data():
     try:
-        data = yf.download(sanitize_tickers(ASSET_UNIVERSE.keys()), period="3y", interval="1d", group_by='ticker', progress=False)
+        data = yf.download(
+            sanitize_tickers(ASSET_UNIVERSE.keys()),
+            period="3y",
+            interval="1d",
+            group_by='ticker',
+            progress=False,
+            auto_adjust=True
+        )
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = [f"{col[0]}_{col[1]}" for col in data.columns]
             close_prices = data.filter(like='_Close')
@@ -50,14 +62,19 @@ def optimize_portfolio(risk_profile, data):
         mu, S = expected_returns.capm_return(data), risk_models.CovarianceShrinkage(data).ledoit_wolf()
         ef = EfficientFrontier(mu, S)
         if risk_profile == "Conservative":
-            ef.add_constraint(lambda w: w <= 0.15); ef.min_volatility()
+            ef.add_constraint(lambda w: w <= 0.15)
+            ef.min_volatility()
         elif risk_profile == "Moderate":
             selected = (data.pct_change(90).mean() / data.pct_change().std()).nlargest(8).index.tolist()
-            ef = EfficientFrontier(mu[selected], S.loc[selected, selected]); ef.add_objective(objective_functions.L2_reg); ef.max_sharpe()
+            ef = EfficientFrontier(mu[selected], S.loc[selected, selected])
+            ef.add_objective(objective_functions.L2_reg)
+            ef.max_sharpe()
         else:
             crypto_assets = [t for t in data.columns if ASSET_UNIVERSE.get(t) == 'Crypto']
-            if crypto_assets: ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.35)
-            ef.add_objective(objective_functions.L2_reg, gamma=0.005); ef.max_sharpe()
+            if crypto_assets: 
+                ef.add_constraint(lambda w: sum(w[c] for c in crypto_assets) >= 0.35)
+            ef.add_objective(objective_functions.L2_reg, gamma=0.005)
+            ef.max_sharpe()
         return ef.clean_weights()
     except Exception as e:
         st.error(f"Optimization error: {str(e)}")
@@ -84,29 +101,37 @@ def calculate_metrics(weights, data):
 def generate_response(prompt, data, metrics, weights):
     try:
         context = f"""
-        You are a risk management expert. The user has a portfolio with the following metrics:
+        Portfolio Metrics:
         - Annual Return: {metrics.get('annual_return', 0):.1%}
-        - Annual Volatility: {metrics.get('annual_volatility', 0):.1%}
+        - Volatility: {metrics.get('annual_volatility', 0):.1%}
         - Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.2f}
-        - Value at Risk (95%): {metrics.get('var_95', 0):.1f}%
-        - Conditional VaR: {metrics.get('cvar_95', 0):.1f}%
+        - 95% VaR: {metrics.get('var_95', 0):.1f}%
+        - 95% CVaR: {metrics.get('cvar_95', 0):.1f}%
         - Max Drawdown: {metrics.get('max_drawdown', 0):.1%}
-
-        The portfolio weights are: {weights}
-
-        The user asked: {prompt}
+        
+        Portfolio Allocation: {weights}
+        
+        User Question: {prompt}
         """
-        response = openai.ChatCompletion.create(model="gpt-4", messages=[{"role": "system", "content": context}, {"role": "user", "content": prompt}])
-        return response['choices'][0]['message']['content']
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You're a portfolio risk analyst. Use these metrics to answer:" + context},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content
     except Exception as e:
         return f"Error generating response: {str(e)}"
 
-# Sidebar
+# Sidebar configuration
 with st.sidebar:
     st.header("Investor Profile")
     risk_answers = {
         'horizon': st.slider("Investment Horizon (Years)", 1, 10, 5),
-        'loss_tolerance': st.select_slider("Max Loss Tolerance", options=["0-10%", "10-20%", "20-30%", "30%+"], value="20-30%"),
+        'loss_tolerance': st.select_slider("Max Loss Tolerance", 
+                                         options=["0-10%", "10-20%", "20-30%", "30%+"],
+                                         value="20-30%"),
         'knowledge': st.radio("Market Experience", ["Novice", "Intermediate", "Expert"]),
         'age': st.number_input("Age", 18, 100, 40)
     }
@@ -114,13 +139,15 @@ with st.sidebar:
     st.metric("Your Risk Profile", risk_profile)
     investment = st.number_input("Investment Amount (€)", 1000, 1000000, 200000)
 
-# Main app
+# Main app logic
 if st.button("Generate Portfolio"):
     with st.spinner("Constructing optimal allocation..."):
         data = fetch_data()
-        if data.empty: st.stop()
+        if data.empty: 
+            st.stop()
         weights = optimize_portfolio(risk_profile, data)
-        if not weights: st.stop()
+        if not weights: 
+            st.stop()
         valid_weights = {k: v for k, v in weights.items() if v > 0.01}
         metrics = calculate_metrics(valid_weights, data)
 
@@ -157,27 +184,72 @@ if st.button("Generate Portfolio"):
                 fig, ax = plt.subplots(figsize=(12, 7))
                 for years, color, alpha in zip([3, 5, 7, 10], ['#1f77b4', '#2ca02c', '#ff7f0e', '#d62728'], [0.15, 0.12, 0.09, 0.06]):
                     simulations = 500
-                    daily_returns = np.random.normal(metrics['annual_return']/252, metrics['annual_volatility']/np.sqrt(252), (252*years, simulations))
+                    daily_returns = np.random.normal(
+                        metrics['annual_return']/252,
+                        metrics['annual_volatility']/np.sqrt(252),
+                        (252*years, simulations)
+                    )
                     growth = investment * np.exp(np.cumsum(daily_returns, axis=0))
                     growth_df = pd.DataFrame(growth)
                     upper, lower = growth_df.quantile(0.9, axis=1), growth_df.quantile(0.1, axis=1)
                     median_growth = growth_df.median(axis=1)
+                    
                     ax.fill_between(range(len(median_growth)), lower, upper, color=color, alpha=alpha, label=f'{years}Y 80% Range')
                     ax.plot(median_growth, color=color, linewidth=2.8, alpha=0.95, label=f'{years}Y Median')
+                    
                     vertical_offset = 40 if years in [3,7] else -40
-                    ax.annotate(f"€{median_growth.iloc[-1]/1e6:.2f}M" if median_growth.iloc[-1] >= 1e6 else f"€{median_growth.iloc[-1]/1e3:.0f}K", xy=(len(median_growth)-1, median_growth.iloc[-1]), xytext=(35, vertical_offset), textcoords='offset points', color=color, fontsize=10, weight='bold', ha='left', va='center', arrowprops=dict(arrowstyle="-|>", color=color, lw=1, alpha=0.6), bbox=dict(boxstyle='round,pad=0.2', fc='white', ec=color, lw=1, alpha=0.9))
-                ax.set_ylim(bottom=0, top=investment*10); ax.set_xlim(0, 252*10 + 100)
+                    ax.annotate(
+                        f"€{median_growth.iloc[-1]/1e6:.2f}M" if median_growth.iloc[-1] >= 1e6 else f"€{median_growth.iloc[-1]/1e3:.0f}K",
+                        xy=(len(median_growth)-1, median_growth.iloc[-1]),
+                        xytext=(35, vertical_offset),
+                        textcoords='offset points',
+                        color=color,
+                        fontsize=10,
+                        weight='bold',
+                        ha='left',
+                        va='center',
+                        arrowprops=dict(
+                            arrowstyle="-|>",
+                            color=color,
+                            lw=1,
+                            alpha=0.6
+                        ),
+                        bbox=dict(
+                            boxstyle='round,pad=0.2',
+                            fc='white',
+                            ec=color,
+                            lw=1,
+                            alpha=0.9
+                        )
+                    )
+
+                ax.set_ylim(bottom=0, top=investment*10)
+                ax.set_xlim(0, 252*10 + 100)
                 ax.set_title("Monte Carlo Projections with Confidence Bounds", fontsize=14, pad=25)
-                ax.set_xlabel("Trading Days", fontsize=12); ax.set_ylabel("Portfolio Value (€)", fontsize=12)
-                ax.grid(True, linestyle='--', alpha=0.2); ax.legend(loc='upper left', frameon=True, facecolor='white')
+                ax.set_xlabel("Trading Days", fontsize=12)
+                ax.set_ylabel("Portfolio Value (€)", fontsize=12)
+                ax.grid(True, linestyle='--', alpha=0.2)
+                ax.legend(loc='upper left', frameon=True, facecolor='white')
                 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'€{x/1e6:.1f}M' if x >= 1e6 else f'€{x/1e3:.0f}K'))
                 st.pyplot(fig)
 
 # Conversational interface
 user_query = st.text_input("Ask me anything about your portfolio:")
 if user_query:
-    response = generate_response(user_query, data, metrics, valid_weights)
-    st.write("**Response:**"); st.write(response)
-    if "graph" in user_query.lower() or "plot" in user_query.lower():
-        fig = plot_historical_returns(data)
-        st.pyplot(fig)
+    if 'data' in locals() and 'metrics' in locals() and 'valid_weights' in locals():
+        response = generate_response(user_query, data, metrics, valid_weights)
+        st.write("**Response:**")
+        st.write(response)
+        
+        if "graph" in user_query.lower() or "plot" in user_query.lower():
+            fig, ax = plt.subplots()
+            for asset in data.columns:
+                ax.plot(data[asset].pct_change().cumsum(), label=asset)
+            ax.set_title("Historical Cumulative Returns")
+            ax.set_xlabel("Date")
+            ax.set_ylabel("Cumulative Returns")
+            ax.legend()
+            ax.grid(True, linestyle='--', alpha=0.2)
+            st.pyplot(fig)
+    else:
+        st.warning("Please generate a portfolio first before asking questions!")
