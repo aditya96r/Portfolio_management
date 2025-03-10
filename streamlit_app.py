@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from pypfopt import EfficientFrontier, objective_functions
 from pypfopt import risk_models, expected_returns
+import sklearn
+from sklearn import __version__ as sklearn_version
 
 # Configure page
 st.set_page_config(page_title="Professional Portfolio Manager", layout="wide")
